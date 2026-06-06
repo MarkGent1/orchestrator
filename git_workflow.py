@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Dict, Any, List
-from slugify import slugify
+import re
 
 from github_mcp_client import GithubMcpClient
 
@@ -9,11 +9,17 @@ class GitWorkflow:
         self.repo_path = repo_path
         self.github = github
 
+    @staticmethod
+    def slugify(text: str) -> str:
+        text = text.lower()
+        text = re.sub(r"[^a-z0-9]+", "-", text)
+        return text.strip("-")
+
     # ---------------------------------------------------------
     # Branch naming
     # ---------------------------------------------------------
     def make_branch_name(self, work_item_id: int, title: str) -> str:
-        slug = slugify(title)[:40]
+        slug = self.slugify(title)[:40]
         return f"feature/{work_item_id}-{slug}"
 
     # ---------------------------------------------------------

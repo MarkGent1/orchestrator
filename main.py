@@ -10,7 +10,6 @@ from file_editing import apply_file_edits_for_task
 from opencode_prompt_builder import build_opencode_prompt_for_task
 from opencode_client import call_opencode
 
-
 async def main():
     # ---------------------------------------------------------
     # CLI validation
