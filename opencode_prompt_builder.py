@@ -1,6 +1,10 @@
 from pathlib import Path
 from typing import Dict, Any, List
 
+
+# ---------------------------------------------------------
+# Detect repo type
+# ---------------------------------------------------------
 def detect_repo_type(repo_path: Path) -> str:
     if any(repo_path.glob("*.sln")):
         return "dotnet-backend"
@@ -8,8 +12,11 @@ def detect_repo_type(repo_path: Path) -> str:
         return "frontend-js"
     return "unknown"
 
+
+# ---------------------------------------------------------
+# Build repo context (file tree)
+# ---------------------------------------------------------
 def build_repo_context(repo_path: Path) -> Dict[str, Any]:
-    # minimal version: just list files under src/ and tests/
     src_root = repo_path / "src"
     tests_root = repo_path / "tests"
 
@@ -27,6 +34,10 @@ def build_repo_context(repo_path: Path) -> Dict[str, Any]:
         "testFiles": list_files(tests_root),
     }
 
+
+# ---------------------------------------------------------
+# Build OpenCode prompt for a single task
+# ---------------------------------------------------------
 async def build_opencode_prompt_for_task(
     repo_path: Path,
     work_item_id: int,
@@ -36,7 +47,6 @@ async def build_opencode_prompt_for_task(
     repo_type = detect_repo_type(repo_path)
     context = build_repo_context(repo_path)
 
-    # You’ll tune this prompt over time; this is a solid starting point.
     prompt = f"""
 You are an AI developer working on a {repo_type} repository that follows Clean Architecture.
 
@@ -54,17 +64,19 @@ Repository context:
 - src files: {context['srcFiles']}
 - test files: {context['testFiles']}
 
-Requirements:
-- Respect Clean Architecture boundaries (Core, Application, Infrastructure, API, Modules).
-- For .NET backends, keep domain logic in Core/Application, infrastructure concerns in Infrastructure, and thin API surfaces.
-- For frontend repos, keep components, hooks, and API routes idiomatic to React/Next.js.
+Architecture rules:
+- Domain logic lives in Core/Application.
+- Infrastructure implements interfaces and external concerns.
+- API surfaces are thin.
+- Modules represent vertical slices.
+- Tests must follow the same modular boundaries.
 
 Output format:
-Return a JSON array of file edits. Each item must have:
-- "path": relative path from repo root (e.g. "src/Modules/Cads.Cds.Api/Cads.Cds.Api.Application/Users/GetUserHandler.cs")
-- "action": one of "create", "modify", "delete"
-- "content": full file content for create/modify; omit for delete.
+Return ONLY a JSON array of file edits. Each item must have:
+- "path": relative path from repo root
+- "action": "create", "modify", or "delete"
+- "content": full file content for create/modify; omit for delete
 
-Do NOT include explanations, only the JSON array.
+Do NOT include explanations. Only return the JSON array.
 """
     return prompt
