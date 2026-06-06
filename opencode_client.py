@@ -10,7 +10,7 @@ load_dotenv()
 class OpenCodeClient:
     """
     Fully automated OpenCode → Claude integration.
-    Sends prompts to the OpenCode model and returns structured file edits.
+    Sends prompts to the model and returns structured file edits.
     """
 
     def __init__(self, api_key: Optional[str] = None):
@@ -19,10 +19,17 @@ class OpenCodeClient:
             raise RuntimeError("ANTHROPIC_API_KEY is missing. Add it to your .env file.")
 
         self.client = AsyncAnthropic(api_key=api_key)
+
+        # Your workspace supports Claude 4 models
         self.model = "claude-sonnet-4-6"
+
+        # STRONG system prompt — absolutely required
         self.system_prompt = (
-            "You are OpenCode. Always return ONLY valid JSON. "
-            "Never include explanations, comments, or text outside the JSON array."
+            "You are OpenCode. You ALWAYS return ONLY a JSON array of file edits.\n"
+            "Never include explanations, comments, markdown, or text outside the JSON array.\n"
+            "If no edits are needed, return an empty JSON array: [].\n"
+            "Each edit must include: \"file\", \"instructions\", and \"content\".\n"
+            "Your output must ALWAYS be valid JSON."
         )
 
     # ---------------------------------------------------------
@@ -42,11 +49,24 @@ class OpenCodeClient:
 
                 raw = response.content[0].text.strip()
 
+                # Debug logging (optional)
+                print("\n--- RAW CLAUDE OUTPUT ---")
+                print(raw)
+                print("--- END RAW OUTPUT ---\n")
+
+                # Handle empty output
+                if not raw:
+                    return []
+
+                # First attempt: direct JSON
                 try:
                     return json.loads(raw)
                 except json.JSONDecodeError:
-                    cleaned = self._extract_json(raw)
-                    return json.loads(cleaned)
+                    pass
+
+                # Second attempt: repair JSON
+                cleaned = self._repair_json(raw)
+                return json.loads(cleaned)
 
             except Exception as ex:
                 if attempt == max_attempts:
@@ -58,21 +78,37 @@ class OpenCodeClient:
         raise RuntimeError("Unexpected failure in generate_file_edits")
 
     # ---------------------------------------------------------
-    # Helpers
+    # JSON Repair Helpers
     # ---------------------------------------------------------
-    def _extract_json(self, text: str) -> str:
+    def _repair_json(self, text: str) -> str:
         """
-        Extracts the first JSON array from the text.
-        Useful if Claude wraps JSON in markdown fences or adds stray characters.
+        Attempts to extract or repair JSON arrays from Claude output.
+        Handles:
+        - Markdown fences
+        - Leading/trailing prose
+        - Single-object JSON (wraps in array)
         """
-        start = text.find("[")
-        end = text.rfind("]")
 
-        if start == -1 or end == -1:
-            raise ValueError("No JSON array found in OpenCode output")
+        # Remove markdown fences
+        if "```" in text:
+            parts = text.split("```")
+            # Try to find the JSON-looking part
+            for p in parts:
+                if "[" in p or "{" in p:
+                    text = p.strip()
+                    break
 
-        return text[start : end + 1]
+        # Extract array if present
+        if "[" in text and "]" in text:
+            start = text.find("[")
+            end = text.rfind("]") + 1
+            return text[start:end]
 
+        # If it's a single object, wrap it
+        if text.strip().startswith("{") and text.strip().endswith("}"):
+            return f"[{text}]"
+
+        raise ValueError("No JSON array found in OpenCode output")
 
 # ---------------------------------------------------------
 # Convenience function for orchestrator
