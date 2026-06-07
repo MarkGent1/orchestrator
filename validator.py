@@ -1,79 +1,70 @@
-from typing import Tuple
+from pathlib import Path
 from repo_type import detect_repo_type
-from build_runner import BuildRunner
-from test_runner import TestRunner
+
+from backend_build import run_backend_build
+from backend_test import run_backend_tests
+
+from frontend_build import run_frontend_build
+from frontend_test import run_frontend_tests
+from frontend_lint import run_frontend_lint
+from frontend_format import run_frontend_format
+
 from fix_loop import FixLoop
-from file_editing import apply_file_edits
+from file_editing import apply_file_edits_for_task
+
 
 class BuildTestValidator:
-    """
-    Runs build + tests, and if they fail, uses OpenCode to fix issues
-    and retries up to max_attempts.
-    """
-    def __init__(self, repo_path: str, max_fix_attempts: int = 3):
+    def __init__(self, repo_path: Path, max_fix_attempts: int = 3):
         self.repo_path = repo_path
         self.repo_type = detect_repo_type(repo_path)
+        self.max_fix_attempts = max_fix_attempts
+        self.fix_loop = FixLoop(repo_path, max_fix_attempts)
 
-        self.build_runner = BuildRunner(repo_path, self.repo_type)
-        self.test_runner = TestRunner(repo_path, self.repo_type)
-        self.fix_loop = FixLoop(repo_path, max_attempts=max_fix_attempts)
+    async def run_validation(self):
+        if self.repo_type == "backend":
+            phases = [
+                ("build", run_backend_build),
+                ("test", run_backend_tests),
+            ]
 
-    async def run_validation(self) -> Tuple[bool, str]:
-        # 1. Build
-        build_ok, build_output = self.build_runner.run()
-        print("\n=== Build Output ===")
-        print(build_output)
-        print("====================\n")
+        elif self.repo_type == "frontend":
+            phases = [
+                ("build", run_frontend_build),
+                ("test", run_frontend_tests),
+                ("lint", run_frontend_lint),
+                ("format", run_frontend_format),
+            ]
 
-        if not build_ok:
-            ok, msg = await self._fix_and_retry(build_output, phase="build")
-            return ok, msg
+        else:
+            return False, f"Unknown repo type: {self.repo_type}"
 
-        # 2. Test
-        test_ok, test_output = self.test_runner.run()
-        print("\n=== Test Output ===")
-        print(test_output)
-        print("===================\n")
+        for phase_name, runner in phases:
+            ok, output = runner(self.repo_path)
+            print(f"\n=== {phase_name.upper()} OUTPUT ===\n{output}\n")
 
-        if not test_ok:
-            ok, msg = await self._fix_and_retry(test_output, phase="test")
-            return ok, msg
+            if not ok:
+                ok, msg = await self._fix_and_retry(phase_name, output, runner)
+                if not ok:
+                    return False, msg
 
-        return True, "Build & tests passed"
+        return True, "All validation steps passed"
 
-    async def _fix_and_retry(self, error_output: str, phase: str) -> Tuple[bool, str]:
-        """
-        Try to fix errors using OpenCode, apply edits, and rerun build+tests.
-        """
-        for attempt in range(1, self.fix_loop.max_attempts + 1):
-            print(f"\n=== Fix attempt {attempt} for {phase} errors ===")
+    async def _fix_and_retry(self, phase_name, error_output, runner):
+        for attempt in range(1, self.max_fix_attempts + 1):
+            print(f"\n=== Fix attempt {attempt} for {phase_name} errors ===")
+
             fixes = await self.fix_loop.attempt_fix(error_output)
-
             if not fixes:
-                return False, f"No fix possible for {phase} errors"
+                return False, f"No fix possible for {phase_name} errors"
 
-            # Apply fixes
-            apply_file_edits(self.repo_path, fixes)
+            apply_file_edits_for_task(self.repo_path, fixes)
 
-            # Re-run build
-            build_ok, build_output = self.build_runner.run()
-            print("\n=== Build Output (after fix) ===")
-            print(build_output)
-            print("================================\n")
+            ok, output = runner(self.repo_path)
+            print(f"\n=== {phase_name.upper()} OUTPUT (after fix) ===\n{output}\n")
 
-            if not build_ok:
-                error_output = build_output
-                continue
+            if ok:
+                return True, f"{phase_name} fixed"
 
-            # Re-run tests
-            test_ok, test_output = self.test_runner.run()
-            print("\n=== Test Output (after fix) ===")
-            print(test_output)
-            print("================================\n")
+            error_output = output
 
-            if test_ok:
-                return True, "Fixed and validated"
-
-            error_output = test_output
-
-        return False, f"Fix loop exhausted for {phase} errors"
+        return False, f"Fix loop exhausted for {phase_name}"
