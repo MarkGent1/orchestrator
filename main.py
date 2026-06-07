@@ -9,19 +9,16 @@ from git_workflow import GitWorkflow
 from file_editing import apply_file_edits_for_task
 from opencode_prompt_builder import build_opencode_prompt_for_task
 from opencode_client import call_opencode
+from validator import BuildTestValidator
 
 async def main():
     # ---------------------------------------------------------
     # CLI validation
     # ---------------------------------------------------------
-    if len(sys.argv) < 3:
+    if len(sys.argv) != 4 or sys.argv[2] != "--repo":
         raise ValueError("Usage: python main.py <work_item_id> --repo <repo_path>")
 
     work_item_id = int(sys.argv[1])
-
-    if sys.argv[2] != "--repo" or len(sys.argv) < 4:
-        raise ValueError("Usage: python main.py <work_item_id> --repo <repo_path>")
-
     repo_path = Path(sys.argv[3]).resolve()
 
     # ---------------------------------------------------------
@@ -87,6 +84,19 @@ async def main():
         print(f"Committed {len(changed_files)} file(s) for task: {task['title']}")
 
     # ---------------------------------------------------------
+    # 3b. Verify build and test
+    # ---------------------------------------------------------
+
+    validator = BuildTestValidator(repo_path=repo_path, max_fix_attempts=3)
+    ok, message = await validator.run_validation()
+
+    if not ok:
+        print(f"Build and test validation failed: {message}")
+        return
+
+    print(f"Build and test validation succeeded: {message}")
+
+    # ---------------------------------------------------------
     # 4. Push branch
     # ---------------------------------------------------------
     print(f"\nPushing branch: {branch_name}")
@@ -120,7 +130,6 @@ async def main():
         "pr_url": pr_url,
         "plan": plan,
     })
-
 
 if __name__ == "__main__":
     asyncio.run(main())
