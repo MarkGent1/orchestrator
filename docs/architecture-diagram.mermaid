@@ -1,0 +1,11 @@
+flowchart TD
+
+A[ADO Work Item] --> B[Module 1: Planning<br/>WorkItemPlanner<br/>Generate Task Plan]
+
+B --> C[Module 2: Task Execution<br/>GitWorkflow<br/>OpenCode File Edits<br/>Commit per Task]
+
+C --> D[Module 4: SDLC Engine<br/>Task Decomposition<br/>Subtask Execution<br/>Multi-pass Refinement<br/>Task Memory]
+
+D --> E[Module 3: Validation<br/>Build/Test/Lint/Format<br/>Auto-fix Loop]
+
+E --> F[PR Creation<br/>Push Branch<br/>Open PR<br/>PR Enhancer<br/>Link to ADO]

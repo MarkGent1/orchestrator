@@ -1,0 +1,66 @@
+┌──────────────────────────────────────────────────────────────┐
+│                        WORK ITEM (ADO)                        │
+└───────────────┬──────────────────────────────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    MODULE 1 — PLANNING                        │
+│  WorkItemPlanner                                              │
+│  - Fetch Work Item                                            │
+│  - Generate plan (tasks)                                      │
+└───────────────┬──────────────────────────────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│               MODULE 2 — TASK EXECUTION                       │
+│  GitWorkflow                                                  │
+│  - Create feature branch                                      │
+│                                                               │
+│  Task Loop                                                    │
+│  - Build prompt                                               │
+│  - Call OpenCode                                              │
+│  - Apply file edits                                           │
+│  - Commit per task                                            │
+└───────────────┬──────────────────────────────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│               MODULE 4 — SDLC ENGINE                          │
+│  Task Decomposition                                           │
+│  - Break tasks into subtasks                                  │
+│                                                               │
+│  Subtask Execution                                            │
+│  - Execute subtasks                                           │
+│  - Multi-pass refinement                                      │
+│  - Commit per subtask                                         │
+│                                                               │
+│  Task Memory                                                  │
+│  - Track changed files, fixes, context                        │
+└───────────────┬──────────────────────────────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│               MODULE 3 — VALIDATION                           │
+│  BuildTestValidator                                           │
+│  - Detect repo type                                           │
+│  - Backend: build + test                                      │
+│  - Frontend: build + test + lint + format                     │
+│  - Auto-fix loop (FixLoop)                                    │
+│  - Only proceed if clean                                      │
+└───────────────┬──────────────────────────────────────────────┘
+                │
+                ▼
+┌──────────────────────────────────────────────────────────────┐
+│                     PR CREATION                               │
+│  GitWorkflow                                                  │
+│  - Push branch                                                │
+│  - Open PR                                                    │
+│                                                               │
+│  PR Enhancer                                                  │
+│  - Add plan summary                                           │
+│  - Add task memory                                            │
+│  - Add build/test logs                                        │
+│                                                               │
+│  AdoMcpClient                                                 │
+│  - Link PR to Work Item                                       │
+└──────────────────────────────────────────────────────────────┘
