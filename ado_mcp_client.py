@@ -3,11 +3,15 @@ import json
 import uuid
 import os
 from pathlib import Path
+from typing import Any, Dict
+
 from dotenv import load_dotenv
+
 load_dotenv()  # loads .env into os.environ
 
+
 class AdoMcpClient:
-    def __init__(self, server_path):
+    def __init__(self, server_path: str):
         server_path = str(Path(server_path))
 
         # Launch Node MCP server in binary mode (Windows-safe)
@@ -17,14 +21,15 @@ class AdoMcpClient:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             bufsize=0,
-            env={
-                **os.environ,  # includes .env values
-            }
+            env={**os.environ},
         )
 
         print("Started MCP server:", self.proc.pid)
 
-    async def _call(self, method, params):
+    async def _call(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.proc.stdin or not self.proc.stdout:
+            raise RuntimeError("MCP process not initialized correctly")
+
         request_id = str(uuid.uuid4())
 
         payload = {
@@ -33,8 +38,8 @@ class AdoMcpClient:
             "method": "tools/call",
             "params": {
                 "name": method,       # e.g. "getWorkItem"
-                "arguments": params   # e.g. {"id": 151}
-            }
+                "arguments": params,  # e.g. {"id": 151}
+            },
         }
 
         # Write JSON-RPC request as bytes
@@ -62,35 +67,45 @@ class AdoMcpClient:
     # Public API — these MUST exist for the orchestrator
     # ---------------------------------------------------------
 
-    async def get_work_item(self, id: int):
+    async def get_work_item(self, id: int) -> Dict[str, Any]:
         result = await self._call("getWorkItem", {"id": id})
         return result["structuredContent"]["workItem"]
 
-    async def update_work_item(self, id: int, fields: dict):
+    async def update_work_item(self, id: int, fields: Dict[str, Any]) -> Dict[str, Any]:
         result = await self._call("updateWorkItem", {"id": id, "fields": fields})
         return result["structuredContent"]["workItem"]
 
-    async def add_comment(self, id: int, text: str):
+    async def add_comment(self, id: int, text: str) -> Dict[str, Any]:
         result = await self._call("addWorkItemComment", {"id": id, "text": text})
         return result["structuredContent"]["comment"]
 
-    async def link_pr(self, id: int, pr_url: str):
+    async def link_pr(self, id: int, pr_url: str) -> Dict[str, Any]:
         result = await self._call("linkPullRequest", {"id": id, "prUrl": pr_url})
         return result["structuredContent"]["workItem"]
-    
-    async def create_child_task(self, parent_id: int, title: str, description: str):
-        result = await self._call("createChildTask", {
-            "parentId": parent_id,
-            "title": title,
-            "description": description
-        })
+
+    async def create_child_task(self, parent_id: int, title: str, description: str) -> Dict[str, Any]:
+        result = await self._call(
+            "createChildTask",
+            {
+                "parentId": parent_id,
+                "title": title,
+                "description": description,
+            },
+        )
         return result["structuredContent"]["workItem"]
-    
-    async def update_work_item_state(self, id: int, state: str):
-        result = await self._call("updateWorkItem", {
-            "id": id,
-            "fields": {
-                "System.State": state
-            }
-        })
+
+    async def update_work_item_state(self, id: int, state: str) -> Dict[str, Any]:
+        result = await self._call(
+            "updateWorkItem",
+            {
+                "id": id,
+                "fields": {
+                    "System.State": state,
+                },
+            },
+        )
         return result["structuredContent"]["workItem"]
+
+    def close(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()

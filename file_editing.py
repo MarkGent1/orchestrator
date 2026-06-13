@@ -34,7 +34,7 @@ def apply_file_edits_for_task(
         rel_path = Path(path)
 
         full_path = repo_path / rel_path
-        action = edit.get("action", "modify")
+        action = edit.get("instructions", "modify")
 
         if action in ("create", "modify"):
             full_path.parent.mkdir(parents=True, exist_ok=True)
