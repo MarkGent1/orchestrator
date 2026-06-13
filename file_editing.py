@@ -20,7 +20,19 @@ def apply_file_edits_for_task(
     changed_files = []
 
     for edit in file_edits:
-        rel_path = Path(edit["path"])
+        path = (
+            edit.get("path")
+            or edit.get("file")
+            or edit.get("file_path")
+            or edit.get("new_file")
+            or edit.get("filename")
+        )
+
+        if not path:
+            raise ValueError(f"Edit has no path-like field: {edit}")
+
+        rel_path = Path(path)
+
         full_path = repo_path / rel_path
         action = edit.get("action", "modify")
 

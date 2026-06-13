@@ -1,4 +1,4 @@
-from opencode_client import call_opencode
+from opencode.client import call_opencode_json
 
 async def decompose_task(work_item_id, work_item_title, task):
     prompt = f"""
@@ -18,4 +18,4 @@ Return ONLY JSON:
   ...
 ]
 """
-    return await call_opencode(prompt)
+    return await call_opencode_json(prompt)

@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from opencode_client import call_opencode
+from opencode.client import call_opencode
 
 class FixLoop:
     """
