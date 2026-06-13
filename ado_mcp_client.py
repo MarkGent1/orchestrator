@@ -11,10 +11,19 @@ load_dotenv()  # loads .env into os.environ
 
 
 class AdoMcpClient:
+    """
+    Thin JSON-RPC client for the Azure DevOps MCP server.
+
+    Responsibilities:
+    - Start the Node MCP server as a child process
+    - Send JSON-RPC requests over stdin
+    - Read JSON-RPC responses from stdout
+    - Expose a small, typed public API for the orchestrator
+    """
+
     def __init__(self, server_path: str):
         server_path = str(Path(server_path))
 
-        # Launch Node MCP server in binary mode (Windows-safe)
         self.proc = subprocess.Popen(
             ["node", server_path],
             stdin=subprocess.PIPE,
@@ -26,9 +35,16 @@ class AdoMcpClient:
 
         print("Started MCP server:", self.proc.pid)
 
+    def close(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+
     async def _call(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Low-level JSON-RPC call helper.
+        """
         if not self.proc.stdin or not self.proc.stdout:
-            raise RuntimeError("MCP process not initialized correctly")
+            raise RuntimeError("MCP process not initialized with pipes")
 
         request_id = str(uuid.uuid4())
 
@@ -37,17 +53,15 @@ class AdoMcpClient:
             "id": request_id,
             "method": "tools/call",
             "params": {
-                "name": method,       # e.g. "getWorkItem"
-                "arguments": params,  # e.g. {"id": 151}
+                "name": method,
+                "arguments": params,
             },
         }
 
-        # Write JSON-RPC request as bytes
         message = (json.dumps(payload) + "\n").encode("utf-8")
         self.proc.stdin.write(message)
         self.proc.stdin.flush()
 
-        # Read response lines as bytes
         while True:
             line = self.proc.stdout.readline()
             if not line:
@@ -83,7 +97,12 @@ class AdoMcpClient:
         result = await self._call("linkPullRequest", {"id": id, "prUrl": pr_url})
         return result["structuredContent"]["workItem"]
 
-    async def create_child_task(self, parent_id: int, title: str, description: str) -> Dict[str, Any]:
+    async def create_child_task(
+        self,
+        parent_id: int,
+        title: str,
+        description: str,
+    ) -> Dict[str, Any]:
         result = await self._call(
             "createChildTask",
             {
@@ -105,7 +124,3 @@ class AdoMcpClient:
             },
         )
         return result["structuredContent"]["workItem"]
-
-    def close(self) -> None:
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()

@@ -1,7 +1,5 @@
 from typing import List, Dict, Any
-
 from opencode.client import call_opencode
-
 
 class FixLoop:
     """
@@ -13,13 +11,13 @@ class FixLoop:
         self.max_attempts = max_attempts
 
     async def attempt_fix(self, error_output: str) -> List[Dict[str, Any]]:
-        """
-        Returns a JSON array of file edits (or [] if no fix is possible).
-        """
-        base_prompt = f"""
+        prompt = f"""
 You are OpenCode Fixer.
 
 The build or test run failed.
+
+Repository root:
+{self.repo_path}
 
 Here is the error output:
 
@@ -27,23 +25,22 @@ Here is the error output:
 
 Return ONLY a JSON array of file edits that fix the issue.
 If no fix is possible, return [].
-Each edit must include: "file", "instructions", and "content".
+
+Each edit MUST have:
+- "file": relative path from the repository root
+- "instructions": one of "create", "modify", "delete"
+- "content": full file content for create/modify; any value for delete
+
+Your output must ALWAYS be valid JSON.
 """
 
-        last_error: Exception | None = None
+        edits = await call_opencode(prompt)
 
-        for _ in range(self.max_attempts):
-            try:
-                edits = await call_opencode(base_prompt)
-                # Defensive: ensure we always return a list
-                if not isinstance(edits, list):
-                    raise TypeError(f"Expected list of edits, got {type(edits)}")
-                return edits
-            except Exception as ex:
-                last_error = ex
-                continue
+        if not isinstance(edits, list):
+            raise TypeError(f"Expected a JSON array of edits, got: {type(edits)}")
 
-        # If we truly can't parse anything useful, surface the last error
-        if last_error:
-            raise last_error
-        return []
+        for e in edits:
+            if "instructions" not in e:
+                raise ValueError("FixLoop: missing 'instructions' field in edit")
+
+        return edits

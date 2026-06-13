@@ -1,18 +1,37 @@
+from typing import Dict, Any, List
+
+
 class WorkItemPlanner:
+    """
+    Generates a task plan for an Azure DevOps Work Item, validates quality,
+    creates child tasks, posts a plan comment, and transitions the Work Item
+    to Active.
+
+    This class is intentionally deterministic: the same Work Item always
+    produces the same plan structure.
+    """
+
     def __init__(self, ado_mcp_client):
         self.ado = ado_mcp_client
 
-    async def plan_work_item(self, work_item_id: int):
+    # ---------------------------------------------------------
+    # Public API
+    # ---------------------------------------------------------
+    async def plan_work_item(self, work_item_id: int) -> Dict[str, Any]:
+        """
+        Fetch the Work Item, validate quality, generate a task plan,
+        create child tasks, post a comment, and update state.
+        """
         wi = await self.ado.get_work_item(work_item_id)
 
-        title = wi["fields"].get("System.Title", "")
-        description = wi["fields"].get("System.Description", "")
-        acceptance = wi["fields"].get("Microsoft.VSTS.Common.AcceptanceCriteria", "")
+        title = wi["fields"].get("System.Title", "").strip()
+        description = wi["fields"].get("System.Description", "").strip()
+        acceptance = wi["fields"].get("Microsoft.VSTS.Common.AcceptanceCriteria", "").strip()
 
         quality_issues = self.validate_work_item(title, description, acceptance)
         plan = self.generate_task_plan(title, description, acceptance)
 
-        created_tasks = []
+        created_tasks: List[Dict[str, Any]] = []
         for task in plan["tasks"]:
             created = await self.ado.create_child_task(
                 parent_id=work_item_id,
@@ -34,13 +53,19 @@ class WorkItemPlanner:
             "quality_issues": quality_issues,
         }
 
-    def validate_work_item(self, title, description, acceptance):
+    # ---------------------------------------------------------
+    # Quality validation
+    # ---------------------------------------------------------
+    def validate_work_item(self, title: str, description: str, acceptance: str) -> List[str]:
+        """
+        Basic Work Item quality checks.
+        """
         issues = []
 
-        if len(title.strip()) < 5:
+        if len(title) < 5:
             issues.append("Title is too short.")
 
-        if not description or len(description.strip()) < 20:
+        if not description or len(description) < 20:
             issues.append("Description is missing or too short.")
 
         if not acceptance:
@@ -51,7 +76,13 @@ class WorkItemPlanner:
 
         return issues
 
-    def generate_task_plan(self, title, description, acceptance):
+    # ---------------------------------------------------------
+    # Task plan generation
+    # ---------------------------------------------------------
+    def generate_task_plan(self, title: str, description: str, acceptance: str) -> Dict[str, Any]:
+        """
+        Deterministic task plan for the orchestrator.
+        """
         return {
             "title": title,
             "tasks": [
@@ -82,7 +113,19 @@ class WorkItemPlanner:
             ],
         }
 
-    def render_plan_comment(self, plan, created_tasks, issues):
+    # ---------------------------------------------------------
+    # Comment rendering
+    # ---------------------------------------------------------
+    def render_plan_comment(
+        self,
+        plan: Dict[str, Any],
+        created_tasks: List[Dict[str, Any]],
+        issues: List[str],
+    ) -> str:
+        """
+        Render a markdown comment summarising the plan, quality issues,
+        and created tasks.
+        """
         comment = "### 🧠 Work Item Plan Generated\n\n"
 
         if issues:
