@@ -80,7 +80,12 @@ class OpenCodeClient:
                     )
 
                     raw = (response.content[0].text or "").strip()
-                    cleaned = JsonExtractor.extract(raw)
+
+                    try:
+                        cleaned = JsonExtractor.extract(raw)
+                    except Exception:
+                        # ⭐ FINAL FALLBACK ⭐
+                        return []
 
                 # 3. Escape content strings
                 cleaned = JsonSanitizer.escape_content_strings(cleaned)
@@ -109,11 +114,16 @@ class OpenCodeClient:
                     )
 
                     raw = (response.content[0].text or "").strip()
-                    cleaned = JsonExtractor.extract(raw)
-                    cleaned = JsonSanitizer.escape_content_strings(cleaned)
-                    cleaned = JsonSanitizer.sanitize(cleaned)
-                    cleaned = cleaned.lstrip()
-                    edits = json.loads(cleaned)
+
+                    try:
+                        cleaned = JsonExtractor.extract(raw)
+                        cleaned = JsonSanitizer.escape_content_strings(cleaned)
+                        cleaned = JsonSanitizer.sanitize(cleaned)
+                        cleaned = cleaned.lstrip()
+                        edits = json.loads(cleaned)
+                    except Exception:
+                        # ⭐ FINAL FALLBACK ⭐
+                        return []
 
                 # 6. Validate structure
                 JsonValidator.validate(edits)
@@ -129,12 +139,14 @@ class OpenCodeClient:
 
         raise RuntimeError("Unexpected failure in generate_file_edits")
 
+
 # ---------------------------------------------------------
 # Convenience function (public API)
 # ---------------------------------------------------------
 async def call_opencode(prompt: str):
     client = OpenCodeClient()
     return await client.generate_file_edits(prompt)
+
 
 # ---------------------------------------------------------
 # Convenience: generic JSON (no file-edit validation)
@@ -213,6 +225,7 @@ async def call_opencode_json(prompt: str):
         pass
 
     raise RuntimeError("Unable to parse JSON from model output after strict regeneration")
+
 
 def extract_json_object(raw: str) -> str:
     start = raw.find("{")
