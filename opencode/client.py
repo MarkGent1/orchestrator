@@ -89,7 +89,31 @@ class OpenCodeClient:
                 cleaned = JsonSanitizer.sanitize(cleaned)
 
                 # 5. Parse JSON
-                edits = json.loads(cleaned)
+                try:
+                    cleaned = cleaned.lstrip()
+                    edits = json.loads(cleaned)
+                except Exception:
+                    # Regenerate with strict prompt
+                    strict_prompt = (
+                        "Return ONLY a JSON array. No prose. No markdown. No comments. "
+                        "No explanations. No multiple arrays. No text before or after. "
+                        "If you cannot produce valid JSON, return [].\n\n"
+                        f"Original task:\n{prompt}"
+                    )
+
+                    response = await self.client.messages.create(
+                        model=self.model,
+                        max_tokens=4096,
+                        system=self.system_prompt,
+                        messages=[{"role": "user", "content": strict_prompt}],
+                    )
+
+                    raw = (response.content[0].text or "").strip()
+                    cleaned = JsonExtractor.extract(raw)
+                    cleaned = JsonSanitizer.escape_content_strings(cleaned)
+                    cleaned = JsonSanitizer.sanitize(cleaned)
+                    cleaned = cleaned.lstrip()
+                    edits = json.loads(cleaned)
 
                 # 6. Validate structure
                 JsonValidator.validate(edits)
@@ -117,24 +141,97 @@ async def call_opencode(prompt: str):
 # ---------------------------------------------------------
 async def call_opencode_json(prompt: str):
     client = OpenCodeClient()
-    raw = await client.client.messages.create(
-        model=client.model,
-        max_tokens=4096,
-        system=client.system_prompt,
-        messages=[{"role": "user", "content": prompt}],
-    )
 
-    text = (raw.content[0].text or "").strip()
+    async def run(prompt_text: str):
+        response = await client.client.messages.create(
+            model=client.model,
+            max_tokens=4096,
+            system=client.system_prompt,
+            messages=[{"role": "user", "content": prompt_text}],
+        )
+        return (response.content[0].text or "").strip()
 
-    # Try direct JSON
+    # 1. First attempt
+    raw = await run(prompt)
+
+    # 1a. Try direct JSON
     try:
-        return json.loads(text)
+        return json.loads(raw)
     except:
         pass
 
-    # Extract JSON array or object
-    cleaned = JsonExtractor.extract(text)
-    cleaned = JsonSanitizer.escape_content_strings(cleaned)
-    cleaned = JsonSanitizer.sanitize(cleaned)
+    # 1b. Try array extraction
+    try:
+        cleaned = JsonExtractor.extract(raw)
+        cleaned = JsonSanitizer.escape_content_strings(cleaned)
+        cleaned = JsonSanitizer.sanitize(cleaned)
+        cleaned = cleaned.lstrip()
+        return json.loads(cleaned)
+    except:
+        pass
 
-    return json.loads(cleaned)
+    # 1c. Try object extraction
+    try:
+        obj = extract_json_object(raw)
+        obj = obj.lstrip()
+        return json.loads(obj)
+    except:
+        pass
+
+    # 2. Strict regeneration fallback
+    strict_prompt = (
+        "Return ONLY valid JSON. No prose. No markdown. No comments. "
+        "No explanations. No multiple JSON values. No text before or after. "
+        "If you cannot produce valid JSON, return {}.\n\n"
+        f"Original task:\n{prompt}"
+    )
+
+    raw = await run(strict_prompt)
+
+    # 2a. Try direct JSON
+    try:
+        return json.loads(raw)
+    except:
+        pass
+
+    # 2b. Try array extraction
+    try:
+        cleaned = JsonExtractor.extract(raw)
+        cleaned = JsonSanitizer.escape_content_strings(cleaned)
+        cleaned = JsonSanitizer.sanitize(cleaned)
+        cleaned = cleaned.lstrip()
+        return json.loads(cleaned)
+    except:
+        pass
+
+    # 2c. Try object extraction
+    try:
+        obj = extract_json_object(raw)
+        obj = obj.lstrip()
+        return json.loads(obj)
+    except:
+        pass
+
+    raise RuntimeError("Unable to parse JSON from model output after strict regeneration")
+
+def extract_json_object(raw: str) -> str:
+    start = raw.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found")
+
+    depth = 0
+    end = None
+
+    for i in range(start, len(raw)):
+        if raw[i] == "{":
+            depth += 1
+        elif raw[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    if end is None:
+        raise ValueError("JSON object not properly closed")
+
+    return raw[start:end].strip()
