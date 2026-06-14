@@ -12,6 +12,7 @@ from task_decomposer import decompose_task
 from task_executor import execute_subtask
 from task_memory import TaskMemory
 from pr_enhancer import build_pr_description
+from preflight_validator import preflight_validate
 
 
 async def main():
@@ -30,6 +31,16 @@ async def main():
     root = Path(__file__).parent.parent
     ado_server_path = str(root / "mcp-servers" / "ado" / "server.js")
     github_server_path = str(root / "mcp-servers" / "github" / "server.js")
+
+    # ---------------------------------------------------------
+    # Preflight Validator
+    # ---------------------------------------------------------
+    ok, message = preflight_validate(repo_path)
+    if not ok:
+        print(message)
+        return
+
+    print(message)
 
     # ---------------------------------------------------------
     # Clients

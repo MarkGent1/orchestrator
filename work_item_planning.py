@@ -3,12 +3,9 @@ from typing import Dict, Any, List
 
 class WorkItemPlanner:
     """
-    Generates a task plan for an Azure DevOps Work Item, validates quality,
-    creates child tasks, posts a plan comment, and transitions the Work Item
-    to Active.
-
-    This class is intentionally deterministic: the same Work Item always
-    produces the same plan structure.
+    Generates a clean, non-overlapping SDLC task plan for an Azure DevOps Work Item,
+    validates quality, creates child tasks, posts a plan comment, and transitions
+    the Work Item to Active.
     """
 
     def __init__(self, ado_mcp_client):
@@ -18,10 +15,6 @@ class WorkItemPlanner:
     # Public API
     # ---------------------------------------------------------
     async def plan_work_item(self, work_item_id: int) -> Dict[str, Any]:
-        """
-        Fetch the Work Item, validate quality, generate a task plan,
-        create child tasks, post a comment, and update state.
-        """
         wi = await self.ado.get_work_item(work_item_id)
 
         title = wi["fields"].get("System.Title", "").strip()
@@ -57,9 +50,6 @@ class WorkItemPlanner:
     # Quality validation
     # ---------------------------------------------------------
     def validate_work_item(self, title: str, description: str, acceptance: str) -> List[str]:
-        """
-        Basic Work Item quality checks.
-        """
         issues = []
 
         if len(title) < 5:
@@ -77,38 +67,52 @@ class WorkItemPlanner:
         return issues
 
     # ---------------------------------------------------------
-    # Task plan generation
+    # Task plan generation (non-overlapping)
     # ---------------------------------------------------------
     def generate_task_plan(self, title: str, description: str, acceptance: str) -> Dict[str, Any]:
-        """
-        Deterministic task plan for the orchestrator.
-        """
         return {
             "title": title,
             "tasks": [
                 {
                     "title": f"Analyse Work Item: {title}",
-                    "description": "Review the Work Item, acceptance criteria, and dependencies.",
+                    "description": (
+                        "Review the Work Item, acceptance criteria, dependencies, "
+                        "constraints, and risks. Identify missing information."
+                    ),
                 },
                 {
                     "title": "Design solution",
-                    "description": "Define data structures, API changes, and architecture impacts.",
+                    "description": (
+                        "Define architecture, data structures, API changes, and component "
+                        "responsibilities. Produce a clear technical approach."
+                    ),
                 },
                 {
                     "title": "Implement backend changes",
-                    "description": "Write code, update models, add business logic.",
+                    "description": (
+                        "Implement backend logic including controllers, services, models, "
+                        "health checks, and business rules."
+                    ),
                 },
                 {
                     "title": "Implement frontend changes",
-                    "description": "Update UI components, forms, and validation.",
+                    "description": (
+                        "Implement UI components, forms, validation, and API integration."
+                    ),
                 },
                 {
                     "title": "Write automated tests",
-                    "description": "Unit tests, integration tests, and acceptance tests.",
+                    "description": (
+                        "Write unit tests, integration tests, and acceptance tests for "
+                        "backend and frontend components."
+                    ),
                 },
                 {
                     "title": "Update documentation",
-                    "description": "Update README, ADRs, and API docs.",
+                    "description": (
+                        "Update README, ADRs, API documentation, and any relevant "
+                        "developer guides."
+                    ),
                 },
             ],
         }
@@ -122,10 +126,6 @@ class WorkItemPlanner:
         created_tasks: List[Dict[str, Any]],
         issues: List[str],
     ) -> str:
-        """
-        Render a markdown comment summarising the plan, quality issues,
-        and created tasks.
-        """
         comment = "### 🧠 Work Item Plan Generated\n\n"
 
         if issues:
