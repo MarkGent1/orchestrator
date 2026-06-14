@@ -70,51 +70,64 @@ class WorkItemPlanner:
     # Task plan generation (non-overlapping)
     # ---------------------------------------------------------
     def generate_task_plan(self, title: str, description: str, acceptance: str) -> Dict[str, Any]:
-        return {
-            "title": title,
-            "tasks": [
-                {
-                    "title": f"Analyse Work Item: {title}",
-                    "description": (
-                        "Review the Work Item, acceptance criteria, dependencies, "
-                        "constraints, and risks. Identify missing information."
-                    ),
-                },
-                {
-                    "title": "Design solution",
-                    "description": (
-                        "Define architecture, data structures, API changes, and component "
-                        "responsibilities. Produce a clear technical approach."
-                    ),
-                },
-                {
-                    "title": "Implement backend changes",
-                    "description": (
-                        "Implement backend logic including controllers, services, models, "
-                        "health checks, and business rules."
-                    ),
-                },
+        text = f"{title} {description} {acceptance}".lower()
+
+        is_frontend = any(word in text for word in [
+            "reactjs", "nextjs", "frontend"
+        ])
+
+        if is_frontend:
+            tasks = [
                 {
                     "title": "Implement frontend changes",
                     "description": (
-                        "Implement UI components, forms, validation, and API integration."
+                        "Implement only the frontend code required for this Work Item. "
+                        "Focus strictly on components, forms, validation, and API calls. "
+                        "Do not generate documentation or unrelated features."
                     ),
                 },
                 {
                     "title": "Write automated tests",
                     "description": (
-                        "Write unit tests, integration tests, and acceptance tests for "
-                        "backend and frontend components."
+                        "Write only the tests required for the new frontend code. "
+                        "Use minimal, focused test cases."
                     ),
                 },
                 {
-                    "title": "Update documentation",
+                    "title": "Refactor and finalise",
                     "description": (
-                        "Update README, ADRs, API documentation, and any relevant "
-                        "developer guides."
+                        "Perform minimal cleanup and ensure the frontend build and tests pass."
                     ),
                 },
-            ],
+            ]
+        else:
+            tasks = [
+                {
+                    "title": "Implement backend changes",
+                    "description": (
+                        "Implement only the backend code required for this Work Item. "
+                        "Focus strictly on controllers, services, models, and logic. "
+                        "Do not generate documentation, ADRs, or unrelated features."
+                    ),
+                },
+                {
+                    "title": "Write automated tests",
+                    "description": (
+                        "Write only the tests required for the new backend code. "
+                        "Keep tests minimal and focused."
+                    ),
+                },
+                {
+                    "title": "Refactor and finalise",
+                    "description": (
+                        "Perform minimal cleanup and ensure the backend build and tests pass."
+                    ),
+                },
+            ]
+
+        return {
+            "title": title,
+            "tasks": tasks,
         }
 
     # ---------------------------------------------------------

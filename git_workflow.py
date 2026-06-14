@@ -64,18 +64,13 @@ class GitWorkflow:
     async def open_pull_request(
         self,
         branch_name: str,
-        work_item_id: int,
-        work_item_title: str,
+        title: str,
+        body: str,
     ) -> str:
-        title = f"{work_item_title} (Work Item {work_item_id})"
-        body = (
-            f"This PR implements the plan for Work Item {work_item_id}.\n\n"
-            f"Title: {work_item_title}\n"
-        )
-
-        return await self.github.open_pull_request(
+        result = await self.github.open_pull_request(
             repo_path=self.repo_path,
             branch_name=branch_name,
             title=title,
             body=body,
         )
+        return result

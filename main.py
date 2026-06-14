@@ -1,5 +1,7 @@
 import asyncio
 import sys
+import os
+import subprocess
 from pathlib import Path
 
 from ado_mcp_client import AdoMcpClient
@@ -48,7 +50,74 @@ async def main():
     ado = AdoMcpClient(ado_server_path)
     github = GithubMcpClient(github_server_path)
     planner = WorkItemPlanner(ado)
-    git = GitWorkflow(repo_path, github)
+    gitflow = GitWorkflow(repo_path, github)
+
+    # ---------------------------------------------------------
+    # TEST MODE: COMMIT ALL CHANGES
+    # ---------------------------------------------------------
+    if os.environ.get("GITHUB_TEST_ONLY") == "1":
+        print("Running in --commit-all GitHub test mode")
+
+        branch_name = f"github-test-{work_item_id}"
+
+        # Helper to run git commands
+        def git_list(cmd):
+            result = subprocess.run(
+                cmd,
+                cwd=repo_path,
+                capture_output=True,
+                text=True
+            )
+            return [p.strip() for p in result.stdout.splitlines() if p.strip()]
+
+        # Detect all changed files
+        modified = git_list(["git", "diff", "--name-only"])
+        staged = git_list(["git", "diff", "--cached", "--name-only"])
+        untracked = git_list(["git", "ls-files", "--others", "--exclude-standard"])
+        deleted = git_list(["git", "ls-files", "--deleted"])
+
+        all_paths = set(modified + staged + untracked + deleted)
+
+        if not all_paths:
+            raise RuntimeError("No changed files detected for --commit-all mode")
+
+        changed_files = []
+        for p in all_paths:
+            full = repo_path / p
+
+            if p in deleted:
+                changed_files.append({"path": p, "content": None})
+                continue
+
+            content = full.read_text()
+            changed_files.append({"path": p, "content": content})
+
+        print(f"Creating branch: {branch_name}")
+        await gitflow.create_branch(branch_name)
+
+        print("Committing ALL detected file changes")
+        await gitflow.commit_task_changes(
+            branch_name=branch_name,
+            work_item_id=work_item_id,
+            task={"title": "Commit All"},
+            changed_files=changed_files,
+        )
+
+        print("Pushing branch")
+        await gitflow.push_branch(branch_name)
+
+        print("Opening PR")
+        pr_url = await gitflow.open_pull_request(
+            branch_name,
+            f"GitHub Commit-All Test {work_item_id}",
+            "This PR was created using --commit-all mode."
+        )
+
+        print("PR created:", pr_url)
+        return
+    # ---------------------------------------------------------
+    # END TEST MODE
+    # ---------------------------------------------------------
 
     # ---------------------------------------------------------
     # 1. Fetch Work Item + Plan
@@ -64,9 +133,9 @@ async def main():
     # ---------------------------------------------------------
     # 2. Create feature branch
     # ---------------------------------------------------------
-    branch_name = git.make_branch_name(work_item_id, plan["title"])
+    branch_name = gitflow.make_branch_name(work_item_id, plan["title"])
     print(f"\nCreating branch: {branch_name}")
-    await git.create_branch(branch_name)
+    await gitflow.create_branch(branch_name)
 
     # ---------------------------------------------------------
     # 3. Task loop → decomposition → subtasks → commit
@@ -90,7 +159,7 @@ async def main():
                 sub,
             )
 
-            await git.commit_task_changes(
+            await gitflow.commit_task_changes(
                 branch_name=branch_name,
                 work_item_id=work_item_id,
                 task=sub,
@@ -115,7 +184,7 @@ async def main():
     # 4. Push branch
     # ---------------------------------------------------------
     print(f"\nPushing branch: {branch_name}")
-    await git.push_branch(branch_name)
+    await gitflow.push_branch(branch_name)
 
     # ---------------------------------------------------------
     # 5. Open PR
@@ -123,11 +192,10 @@ async def main():
     print("\nOpening Pull Request...")
     pr_body = build_pr_description(plan, task_memory, message)
 
-    pr_url = await git.open_pull_request(
+    pr_url = await gitflow.open_pull_request(
         branch_name,
-        work_item_id,
         plan["title"],
-        pr_body
+        pr_body,
     )
 
     print(f"PR created: {pr_url}")
