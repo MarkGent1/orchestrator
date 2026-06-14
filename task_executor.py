@@ -1,6 +1,6 @@
-from opencode_prompt_builder import build_opencode_prompt_for_task
+from opencode.prompt_builder import build_opencode_prompt_for_task
 from file_editing import apply_file_edits_for_task
-from opencode_client import call_opencode
+from opencode.client import call_opencode
 
 async def execute_subtask(repo_path, work_item_id, work_item_title, task, subtask):
     prompt = await build_opencode_prompt_for_task(

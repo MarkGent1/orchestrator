@@ -4,7 +4,7 @@ from typing import Tuple
 
 def run_frontend_build(repo_path: Path) -> Tuple[bool, str]:
     # Ensure dependencies installed
-    subprocess.run(["npm", "install"], cwd=repo_path)
+    subprocess.run(["npm", "install"], cwd=repo_path, check=True)
 
     proc = subprocess.Popen(
         ["npm", "run", "build"],

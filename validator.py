@@ -1,5 +1,5 @@
 from pathlib import Path
-from repo_type import detect_repo_type
+from opencode.repo_type import detect_repo_type
 
 from backend_build import run_backend_build
 from backend_test import run_backend_tests

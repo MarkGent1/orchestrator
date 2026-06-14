@@ -1,6 +1,6 @@
 from pathlib import Path
 import json
-from repo_type import detect_repo_type
+from .repo_type import detect_repo_type
 
 # Utility: collect relevant files for context
 def collect_relevant_files(repo_path: Path, max_files: int = 40):
