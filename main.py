@@ -2,6 +2,7 @@ import asyncio
 import sys
 import os
 import subprocess
+import shutil
 from pathlib import Path
 
 from ado_mcp_client import AdoMcpClient
@@ -15,6 +16,11 @@ from task_executor import execute_subtask
 from task_memory import TaskMemory
 from pr_enhancer import build_pr_description
 from preflight_validator import preflight_validate
+
+from utils.copy_repo import copy_repo_to_workspace
+from utils.repo_scanner import build_module_map
+from utils.tree_visualiser import print_tree
+from architecture.enforcement import CleanArchitectureEnforcer
 
 
 async def main():
@@ -35,14 +41,53 @@ async def main():
     github_server_path = str(root / "mcp-servers" / "github" / "server.js")
 
     # ---------------------------------------------------------
-    # Preflight Validator
+    # Temp workspace
     # ---------------------------------------------------------
-    ok, message = preflight_validate(repo_path)
+    temp_workspace = repo_path / ".orchestrator-tmp"
+    if temp_workspace.exists():
+        shutil.rmtree(temp_workspace)
+    temp_workspace.mkdir(parents=True, exist_ok=True)
+
+    # ---------------------------------------------------------
+    # Copy real repo into temp workspace
+    # ---------------------------------------------------------
+    copy_repo_to_workspace(repo_path, temp_workspace)
+
+    print("=== TEMP WORKSPACE TREE ===")
+    print_tree(temp_workspace, max_depth=3)
+
+    # ---------------------------------------------------------
+    # Preflight Validator (run on temp workspace)
+    # ---------------------------------------------------------
+    ok, message = preflight_validate(temp_workspace)
     if not ok:
         print(message)
         return
-
     print(message)
+
+    # ---------------------------------------------------------
+    # Detect repo type (backend or frontend)
+    # ---------------------------------------------------------
+    from opencode.repo_type import detect_repo_type
+    repo_type = detect_repo_type(temp_workspace)
+
+    # ---------------------------------------------------------
+    # Clean Architecture Enforcer
+    # ---------------------------------------------------------
+    enforcer = CleanArchitectureEnforcer(temp_workspace, repo_type)
+
+    print("Detected modules:")
+    print(enforcer.describe_modules())
+
+    # ---------------------------------------------------------
+    # MODULE DISCOVERY
+    # ---------------------------------------------------------
+    module_root = temp_workspace / "src"
+    module_map = build_module_map(module_root)
+
+    print("Module Map:")
+    for name, info in module_map.items():
+        print(f"- {name}: folders={info['folders']}")
 
     # ---------------------------------------------------------
     # Clients
@@ -50,7 +95,9 @@ async def main():
     ado = AdoMcpClient(ado_server_path)
     github = GithubMcpClient(github_server_path)
     planner = WorkItemPlanner(ado)
-    gitflow = GitWorkflow(repo_path, github)
+
+    # GitWorkflow MUST operate on the real repo, not temp workspace
+    gitflow = GitWorkflow(repo_path, github, repo_type)
 
     # ---------------------------------------------------------
     # TEST MODE: COMMIT ALL CHANGES
@@ -58,9 +105,8 @@ async def main():
     if os.environ.get("GITHUB_TEST_ONLY") == "1":
         print("Running in --commit-all GitHub test mode")
 
-        branch_name = f"github-test-{work_item_id}"
+        branch_name = f"feature/github-test-{work_item_id}"
 
-        # Helper to run git commands
         def git_list(cmd):
             result = subprocess.run(
                 cmd,
@@ -70,7 +116,6 @@ async def main():
             )
             return [p.strip() for p in result.stdout.splitlines() if p.strip()]
 
-        # Detect all changed files
         modified = git_list(["git", "diff", "--name-only"])
         staged = git_list(["git", "diff", "--cached", "--name-only"])
         untracked = git_list(["git", "ls-files", "--others", "--exclude-standard"])
@@ -115,16 +160,13 @@ async def main():
 
         print("PR created:", pr_url)
         return
-    # ---------------------------------------------------------
-    # END TEST MODE
-    # ---------------------------------------------------------
 
     # ---------------------------------------------------------
     # 1. Fetch Work Item + Plan
     # ---------------------------------------------------------
     plan_result = await planner.plan_work_item(work_item_id=work_item_id)
     plan = plan_result["plan"]
-    plan["id"] = work_item_id  # ensure PR builder has an ID
+    plan["id"] = work_item_id
     tasks = plan["tasks"]
 
     print(f"\nFetched Work Item {work_item_id}: {plan['title']}")
@@ -145,18 +187,20 @@ async def main():
     for idx, task in enumerate(tasks, start=1):
         print(f"\n=== Task {idx}/{len(tasks)}: {task['title']} ===")
 
-        # 1. Decompose into subtasks
-        subtasks = await decompose_task(work_item_id, plan["title"], task)
+        subtasks = await decompose_task(work_item_id, plan["title"], task, repo_type)
 
         for sub in subtasks:
             print(f"--- Subtask: {sub['title']} ---")
 
             changed_files = await execute_subtask(
                 repo_path,
+                temp_workspace,
                 work_item_id,
                 plan["title"],
                 task,
                 sub,
+                repo_type,
+                enforcer,
             )
 
             await gitflow.commit_task_changes(
@@ -171,7 +215,14 @@ async def main():
     # ---------------------------------------------------------
     # 3b. Verify build and test
     # ---------------------------------------------------------
-    validator = BuildTestValidator(repo_path=repo_path, max_fix_attempts=3)
+    validator = BuildTestValidator(
+        repo_path=repo_path,
+        temp_workspace=temp_workspace,
+        max_fix_attempts=3,
+        repo_type=repo_type,
+        enforcer=enforcer
+    )
+
     ok, message = await validator.run_validation()
 
     if not ok:

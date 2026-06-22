@@ -26,7 +26,8 @@ def build_pr_description(plan, task_memory, build_logs):
     lines.append(f"## Work Item {work_item_id}: {title}")
     lines.append("")
     lines.append("### Summary")
-    lines.append(f"This PR implements the backend changes required for **{title}**.")
+    repo_type = plan.get("repo_type", "backend")
+    lines.append(f"This PR implements the {repo_type} changes required for **{title}**.")
     lines.append("")
 
     lines.append("### Plan Summary")

@@ -73,18 +73,18 @@ class GithubMcpClient:
     # Public API — these MUST exist for the orchestrator
     # ---------------------------------------------------------
 
-    async def create_branch(self, repo_path: Path, branch_name: str) -> Dict[str, Any]:
+    async def create_branch(self, repo_path: str, branch_name: str) -> Dict[str, Any]:
         return await self._call(
             "createBranch",
             {
-                "repoPath": str(repo_path),
+                "repoPath": repo_path,
                 "branchName": branch_name,
             },
         )
 
     async def commit_files(
         self,
-        repo_path: Path,
+        repo_path: str, 
         branch_name: str,
         message: str,
         files: List[Dict[str, Any]],
@@ -92,25 +92,25 @@ class GithubMcpClient:
         return await self._call(
             "commitFiles",
             {
-                "repoPath": str(repo_path),
+                "repoPath": repo_path,
                 "branchName": branch_name,
                 "message": message,
                 "files": files,
             },
         )
 
-    async def push_branch(self, repo_path: Path, branch_name: str) -> Dict[str, Any]:
+    async def push_branch(self, repo_path: str, branch_name: str) -> Dict[str, Any]:
         return await self._call(
             "pushBranch",
             {
-                "repoPath": str(repo_path),
+                "repoPath": repo_path,
                 "branchName": branch_name,
             },
         )
 
     async def open_pull_request(
         self,
-        repo_path: Path,
+        repo_path: str, 
         branch_name: str,
         title: str,
         body: str,
@@ -118,10 +118,18 @@ class GithubMcpClient:
         result = await self._call(
             "openPullRequest",
             {
-                "repoPath": str(repo_path),
+                "repoPath": repo_path,
                 "branchName": branch_name,
                 "title": title,
                 "body": body,
             },
         )
-        return result["structuredContent"]["prUrl"]
+
+        # Be tolerant of different server response shapes
+        if isinstance(result, dict):
+            if "structuredContent" in result:
+                return result["structuredContent"].get("prUrl")
+            if "prUrl" in result:
+                return result["prUrl"]
+
+        return str(result)

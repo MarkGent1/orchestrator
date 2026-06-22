@@ -15,5 +15,5 @@ class TaskMemory:
         for e in self.entries:
             lines.append(f"- **{e['task']} → {e['subtask']}**")
             for f in e["changed_files"]:
-                lines.append(f"  - `{f}`")
+                lines.append(f"  - `{f['path']}`")
         return "\n".join(lines)
