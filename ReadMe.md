@@ -139,6 +139,18 @@ To run only build/test + FixLoop (no GitHub/ADO):
 ```
 ORCH_TEST_ONLY=1 python main.py <id> --repo <path>
 ```
+Create an .env file or use system environment variables to cover the below:
+
+```
+ENV=local
+GITHUB_TEST_ONLY=0
+ORCH_TEST_ONLY=0
+ADO_ORG=ABC
+ADO_PROJECT=GUID
+ADO_PAT=XXXX
+GITHUB_TOKEN=XXXX
+ANTHROPIC_API_KEY=XXXX
+```
 
 # 🧩 Supported Repo Types
 
