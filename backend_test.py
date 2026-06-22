@@ -3,7 +3,8 @@ from pathlib import Path
 from typing import Tuple
 
 def run_backend_tests(repo_path: Path) -> Tuple[bool, str]:
-    sln_files = list(repo_path.glob("*.sln")) + list(repo_path.glob("*.slnx"))
+    # Find .sln or .slnx anywhere in the workspace
+    sln_files = list(repo_path.rglob("*.sln")) + list(repo_path.rglob("*.slnx"))
     if not sln_files:
         return False, "No solution file (.sln or .slnx) found"
 

@@ -1,5 +1,4 @@
 from pathlib import Path
-from opencode.repo_type import detect_repo_type
 
 from backend_build import run_backend_build
 from backend_test import run_backend_tests
@@ -11,14 +10,16 @@ from frontend_format import run_frontend_format
 
 from fix_loop import FixLoop
 from file_editing import apply_file_edits_for_task
-
+from utils.path_normalization import normalize_path_casing
+from architecture.enforcement import CleanArchitectureEnforcer
 
 class BuildTestValidator:
-    def __init__(self, repo_path: Path, max_fix_attempts: int = 3):
+    def __init__(self, repo_path: Path, temp_workspace: Path, max_fix_attempts: int = 3, repo_type: str = None, enforcer: CleanArchitectureEnforcer = None):
         self.repo_path = repo_path
-        self.repo_type = detect_repo_type(repo_path)
+        self.temp_workspace = temp_workspace
+        self.repo_type = repo_type
         self.max_fix_attempts = max_fix_attempts
-        self.fix_loop = FixLoop(repo_path, max_fix_attempts)
+        self.fix_loop = FixLoop(self.temp_workspace, max_fix_attempts, self.repo_type, enforcer)
 
     async def run_validation(self):
         if self.repo_type == "backend":
@@ -39,7 +40,7 @@ class BuildTestValidator:
             return False, f"Unknown repo type: {self.repo_type}"
 
         for phase_name, runner in phases:
-            ok, output = runner(self.repo_path)
+            ok, output = runner(self.temp_workspace)
             print(f"\n=== {phase_name.upper()} OUTPUT ===\n{output}\n")
 
             if not ok:
@@ -56,10 +57,26 @@ class BuildTestValidator:
             fixes = await self.fix_loop.attempt_fix(error_output)
             if not fixes:
                 return False, f"No fix possible for {phase_name} errors"
+            
+            for fix in fixes:
+                file_path = (
+                    fix.get("file")
+                    or fix.get("path")
+                    or fix.get("file_path")
+                    or fix.get("new_file")
+                    or fix.get("filename")
+                )
+                
+                if not file_path:
+                    raise ValueError(f"FixLoop returned an edit without a file path: {fix}")
+    
+                normalized = normalize_path_casing(file_path, self.repo_type, workspace_root=self.temp_workspace)
 
-            apply_file_edits_for_task(self.repo_path, fixes)
+                fix["path"] = normalized
 
-            ok, output = runner(self.repo_path)
+            apply_file_edits_for_task(self.temp_workspace, fixes, self.repo_type)
+
+            ok, output = runner(self.temp_workspace)
             print(f"\n=== {phase_name.upper()} OUTPUT (after fix) ===\n{output}\n")
 
             if ok:
