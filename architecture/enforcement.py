@@ -14,7 +14,7 @@ class CleanArchitectureEnforcer:
       ✖ No writes outside src/ except tests + root files
     """
 
-    def __init__(self, workspace_root: Path, repo_type: str, debug: bool = True):
+    def __init__(self, workspace_root: Path, repo_type: str, debug: bool = False):
         self.workspace_root = workspace_root
         self.repo_type = repo_type
         self.debug = debug

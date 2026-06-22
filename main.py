@@ -56,28 +56,6 @@ async def main():
     print("=== TEMP WORKSPACE TREE ===")
     print_tree(temp_workspace, max_depth=3)
 
-    # enforcer = CleanArchitectureEnforcer(temp_workspace, "backend")
-    # print("Detected modules:")
-    # print(enforcer.describe_modules())
-
-    # ---------------------------------------------------------
-    # QUICK TEST MODE: only run build + test on temp workspace
-    # ---------------------------------------------------------
-    # if os.environ.get("ORCH_TEST_ONLY") == "1":
-    #     print("Running in ORCH_TEST_ONLY mode")
-
-    #     validator = BuildTestValidator(
-    #         repo_path=repo_path,
-    #         temp_workspace=temp_workspace,
-    #         max_fix_attempts=3,
-    #         repo_type="backend",
-    #         enforcer=enforcer
-    #     )
-
-    #     ok, message = await validator.run_validation()
-    #     print("RESULT:", ok, message)
-    #     return
-
     # ---------------------------------------------------------
     # Preflight Validator (run on temp workspace)
     # ---------------------------------------------------------

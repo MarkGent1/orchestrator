@@ -14,7 +14,14 @@ from utils.path_normalization import normalize_path_casing
 from architecture.enforcement import CleanArchitectureEnforcer
 
 class BuildTestValidator:
-    def __init__(self, repo_path: Path, temp_workspace: Path, max_fix_attempts: int = 3, repo_type: str = None, enforcer: CleanArchitectureEnforcer = None):
+    def __init__(
+        self,
+        repo_path: Path,
+        temp_workspace: Path,
+        max_fix_attempts: int = 3,
+        repo_type: str = None,
+        enforcer: CleanArchitectureEnforcer = None,
+    ):
         self.repo_path = repo_path
         self.temp_workspace = temp_workspace
         self.repo_type = repo_type
@@ -27,7 +34,6 @@ class BuildTestValidator:
                 ("build", run_backend_build),
                 ("test", run_backend_tests),
             ]
-
         elif self.repo_type == "frontend":
             phases = [
                 ("build", run_frontend_build),
@@ -35,7 +41,6 @@ class BuildTestValidator:
                 ("lint", run_frontend_lint),
                 ("format", run_frontend_format),
             ]
-
         else:
             return False, f"Unknown repo type: {self.repo_type}"
 
@@ -55,9 +60,10 @@ class BuildTestValidator:
             print(f"\n=== Fix attempt {attempt} for {phase_name} errors ===")
 
             fixes = await self.fix_loop.attempt_fix(error_output)
+
             if not fixes:
                 return False, f"No fix possible for {phase_name} errors"
-            
+
             for fix in fixes:
                 file_path = (
                     fix.get("file")
@@ -66,11 +72,15 @@ class BuildTestValidator:
                     or fix.get("new_file")
                     or fix.get("filename")
                 )
-                
+
                 if not file_path:
                     raise ValueError(f"FixLoop returned an edit without a file path: {fix}")
-    
-                normalized = normalize_path_casing(file_path, self.repo_type, workspace_root=self.temp_workspace)
+
+                normalized = normalize_path_casing(
+                    file_path,
+                    self.repo_type,
+                    workspace_root=self.temp_workspace,
+                )
 
                 fix["path"] = normalized
 
