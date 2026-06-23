@@ -1,3 +1,21 @@
+# Table of Contents
+
+1. [Overview](README.md)
+2. [Advancing the Orchestrator](docs/pages/1-localfs-mcp-server.md)
+3. [Module 1: Work Item + Plan + Tasks](docs/pages/2-module-1.md)
+4. [Module 2: Branch + PR Automation](docs/pages/3-module-2.md)
+5. [Module 3: Build, Test, Lint, Format & Auto‑Fix Validation](docs/pages/4-module-3.md)
+6. [Module 4: Multi‑Task, Multi‑Phase, Multi‑Commit SDLC Loop](docs/pages/5-module-4.md)
+7. [Architecture Overview](docs/pages/6-architecture-overview.md)
+8. [FixLoop Deep Dive](docs/pages/7-fixloop-deep-dive.md)
+9. [Clean Architecture Enforcement Rules](docs/pages/8-clean-architecture-enforcement.md)
+10. [Troubleshooting](docs/pages/9-troubleshooting.md)
+11. [Example: Add Basic Health Check Endpoint](docs/pages/10-example-e2e-run.md)
+12. [How to Extend the Orchestrator](docs/pages/11-extend-the-orchestrator.md)
+13. [How to Onboard New Repos](docs/pages/12-onboard-new-repos.md)
+
+# Overview
+
 # 🚀 Orchestrator — Autonomous SDLC Engine
 
 **AI‑driven Work Item → Branch → Code → Build/Test → PR automation**
@@ -209,3 +227,5 @@ orchestrator/
 # 🔒 License
 
 Internal use only.
+
+[Advancing the Orchestrator >>](./docs/pages/1-advancing-the-orchestrator.md)
