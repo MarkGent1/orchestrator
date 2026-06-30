@@ -1,8 +1,8 @@
-from anthropic import AsyncAnthropic
-from dotenv import load_dotenv
 import os
 import json
 import asyncio
+from dotenv import load_dotenv
+from openai import AsyncOpenAI
 
 from ..utils.json_extractor import JsonExtractor
 from ..utils.json_sanitizer import JsonSanitizer
@@ -11,57 +11,49 @@ from ..utils.json_validator import JsonValidator
 load_dotenv()
 
 
-class OpenCodeClient:
+class OpenAIClient:
     """
-    Production‑grade OpenCode → Claude integration.
-    Fully hardened against malformed JSON, markdown wrapping,
-    unescaped quotes, multiline content, and partial truncation.
+    Production‑grade OpenAI → OpenCode integration using the new Responses API.
+    Fully hardened against malformed JSON, markdown wrapping, unescaped quotes,
+    multiline content, and partial truncation.
     """
 
-    def __init__(self, api_key=None):
-        api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+    def __init__(self, api_key=None, model="gpt-5.4-mini"):
+        api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise RuntimeError("ANTHROPIC_API_KEY is missing")
+            raise RuntimeError("OPENAI_API_KEY is missing")
 
-        self.client = AsyncAnthropic(api_key=api_key)
-
-        # claude-sonnet-4-6
-        # claude-haiku-4.5
-        # gpt-5.4-mini
-        self.model = "claude-haiku-4.5"
+        self.client = AsyncOpenAI(api_key=api_key)
+        self.model = model
 
         self.system_prompt = (
             "You are OpenCode. You ALWAYS return ONLY a JSON array of file edits.\n"
             "Never include explanations, comments, markdown, or text outside the JSON array.\n"
-            "If no edits are needed, return an empty JSON array: [].\n"
+            "If no edits are needed, return [].\n"
             "Each edit must include: \"file\", \"instructions\", and \"content\".\n"
             "Your output must ALWAYS be valid JSON."
         )
 
     # ---------------------------------------------------------
-    # Low-level model call
+    # Low-level model call (Responses API)
     # ---------------------------------------------------------
     async def _call_model(self, system_prompt: str, user_prompt: str) -> str:
-        response = await self.client.messages.create(
+        response = await self.client.responses.create(
             model=self.model,
-            max_tokens=4096,
-            cache_control={"type": "ephemeral"},
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            max_output_tokens=4096,
         )
-        return (response.content[0].text or "").strip()
+
+        raw = response.output_text
+        return (raw or "").strip()
 
     # ---------------------------------------------------------
-    # Generic JSON parsing helpers
+    # JSON extraction helpers (same as Claude client)
     # ---------------------------------------------------------
     def _extract_json_array(self, raw: str) -> list:
-        """
-        Extracts a JSON array from raw model output using:
-        1. direct json.loads
-        2. array extraction
-        3. sanitization
-        """
-        # 1. Direct JSON
         try:
             data = json.loads(raw)
             if isinstance(data, list):
@@ -69,7 +61,6 @@ class OpenCodeClient:
         except Exception:
             pass
 
-        # 2. Extract array from noisy output
         cleaned = JsonExtractor.extract(raw)
         cleaned = JsonSanitizer.escape_content_strings(cleaned)
         cleaned = JsonSanitizer.sanitize(cleaned)
@@ -82,30 +73,17 @@ class OpenCodeClient:
         return data
 
     def _extract_json_value(self, raw: str):
-        """
-        Extracts ANY JSON value (object or array).
-        """
-        # 1. Direct JSON
         try:
             return json.loads(raw)
         except Exception:
             pass
 
-        # 2. Try array extraction
         try:
             cleaned = JsonExtractor.extract(raw)
             cleaned = JsonSanitizer.escape_content_strings(cleaned)
             cleaned = JsonSanitizer.sanitize(cleaned)
             cleaned = cleaned.lstrip()
             return json.loads(cleaned)
-        except Exception:
-            pass
-
-        # 3. Try object extraction
-        try:
-            obj = extract_json_object(raw)
-            obj = obj.lstrip()
-            return json.loads(obj)
         except Exception:
             pass
 
@@ -121,11 +99,10 @@ class OpenCodeClient:
             try:
                 raw = await self._call_model(self.system_prompt, prompt)
 
-                print("\n--- RAW CLAUDE OUTPUT ---")
+                print("\n--- RAW OPENAI OUTPUT ---")
                 print(raw)
                 print("--- END RAW OUTPUT ---\n")
 
-                # 1. Direct JSON
                 try:
                     edits = json.loads(raw)
                     JsonValidator.validate(edits)
@@ -133,11 +110,9 @@ class OpenCodeClient:
                 except Exception:
                     pass
 
-                # 2. Extract JSON array
                 try:
                     cleaned = JsonExtractor.extract(raw)
                 except Exception:
-                    # Strict regeneration
                     strict_prompt = (
                         "Return ONLY a JSON array. No prose. No markdown. No comments. "
                         "No explanations. No multiple arrays. No text before or after. "
@@ -150,21 +125,15 @@ class OpenCodeClient:
                     try:
                         cleaned = JsonExtractor.extract(raw)
                     except Exception:
-                        # ⭐ FINAL FALLBACK ⭐
                         return []
 
-                # 3. Escape content strings
                 cleaned = JsonSanitizer.escape_content_strings(cleaned)
-
-                # 4. Sanitize broken escapes
                 cleaned = JsonSanitizer.sanitize(cleaned)
+                cleaned = cleaned.lstrip()
 
-                # 5. Parse JSON
                 try:
-                    cleaned = cleaned.lstrip()
                     edits = json.loads(cleaned)
                 except Exception:
-                    # Strict regeneration
                     strict_prompt = (
                         "Return ONLY a JSON array. No prose. No markdown. No comments. "
                         "No explanations. No multiple arrays. No text before or after. "
@@ -181,18 +150,15 @@ class OpenCodeClient:
                         cleaned = cleaned.lstrip()
                         edits = json.loads(cleaned)
                     except Exception:
-                        # ⭐ FINAL FALLBACK ⭐
                         return []
 
-                # 6. Validate structure
                 JsonValidator.validate(edits)
-
                 return edits
 
             except Exception as ex:
                 if attempt == max_attempts:
                     raise RuntimeError(
-                        f"OpenCode failed after {max_attempts} attempts: {ex}"
+                        f"OpenAI failed after {max_attempts} attempts: {ex}"
                     )
                 await asyncio.sleep(1.0)
 
@@ -202,28 +168,20 @@ class OpenCodeClient:
 # ---------------------------------------------------------
 # Public API: file edits
 # ---------------------------------------------------------
-async def call_opencode(prompt: str):
-    client = OpenCodeClient()
+async def call_openai(prompt: str, model="gpt-5.4-mini"):
+    client = OpenAIClient(model=model)
     return await client.generate_file_edits(prompt)
 
 
 # ---------------------------------------------------------
 # Public API: generic JSON (task decomposition)
 # ---------------------------------------------------------
-async def call_opencode_json(prompt: str):
-    client = OpenCodeClient()
+async def call_openai_json(prompt: str, model="gpt-5.4-mini"):
+    client = OpenAIClient(model=model)
 
     def validate_subtask_shape(value):
-        """
-        Ensures decomposition returns:
-        [
-          {"title": "...", "description": "..."},
-          ...
-        ]
-        """
         if not isinstance(value, list):
             raise TypeError("Expected a JSON array of subtasks")
-
         for i, item in enumerate(value):
             if not isinstance(item, dict):
                 raise TypeError(f"Subtask #{i} is not an object")
@@ -231,16 +189,16 @@ async def call_opencode_json(prompt: str):
                 raise TypeError(f"Subtask #{i} missing required fields")
 
     async def run(prompt_text: str) -> str:
-        response = await client.client.messages.create(
+        response = await client.client.responses.create(
             model=client.model,
-            max_tokens=4096,
-            cache_control={"type": "ephemeral"},
-            system=client.system_prompt,
-            messages=[{"role": "user", "content": prompt_text}],
+            input=[
+                {"role": "system", "content": client.system_prompt},
+                {"role": "user", "content": prompt_text},
+            ],
+            max_output_tokens=4096,
         )
-        return (response.content[0].text or "").strip()
+        return (response.output_text or "").strip()
 
-    # 1. First attempt
     raw = await run(prompt)
 
     try:
@@ -250,7 +208,6 @@ async def call_opencode_json(prompt: str):
     except Exception:
         pass
 
-    # 2. Strict regeneration
     strict_prompt = (
         "Return ONLY a JSON array of subtasks. No prose. No markdown. No comments. "
         "No explanations. No multiple JSON values. "
@@ -259,33 +216,6 @@ async def call_opencode_json(prompt: str):
     )
 
     raw = await run(strict_prompt)
-
     value = client._extract_json_value(raw)
     validate_subtask_shape(value)
     return value
-
-
-# ---------------------------------------------------------
-# Object extractor
-# ---------------------------------------------------------
-def extract_json_object(raw: str) -> str:
-    start = raw.find("{")
-    if start == -1:
-        raise ValueError("No JSON object found")
-
-    depth = 0
-    end = None
-
-    for i in range(start, len(raw)):
-        if raw[i] == "{":
-            depth += 1
-        elif raw[i] == "}":
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
-
-    if end is None:
-        raise ValueError("JSON object not properly closed")
-
-    return raw[start:end].strip()

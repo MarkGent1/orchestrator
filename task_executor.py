@@ -1,4 +1,4 @@
-from opencode.prompt_builder import build_opencode_prompt_for_task
+from prompt_builder import build_opencode_prompt_for_task
 from opencode.client import call_opencode
 from utils.path_normalization import normalize_path_casing
 from architecture.enforcement import CleanArchitectureEnforcer

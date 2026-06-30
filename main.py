@@ -68,7 +68,7 @@ async def main():
     # ---------------------------------------------------------
     # Detect repo type (backend or frontend)
     # ---------------------------------------------------------
-    from opencode.repo_type import detect_repo_type
+    from repo_type import detect_repo_type
     repo_type = detect_repo_type(temp_workspace)
 
     # ---------------------------------------------------------
