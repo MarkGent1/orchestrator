@@ -17,6 +17,7 @@ from task_executor import execute_subtask
 from task_memory import TaskMemory
 from pr_enhancer import build_pr_description
 from preflight_validator import preflight_validate
+from run_state import RunState
 
 from utils.copy_repo import copy_repo_to_workspace
 from utils.repo_scanner import build_module_map
@@ -37,6 +38,44 @@ from model_constants import (
 #   --decomposition-model gpt-5.4-mini
 #   --execution-model gpt-5.4-mini
 # -------------------------------------------------------------
+
+
+def _checkout_branch_for_resume(repo_path: Path, branch_name: str) -> bool:
+    """
+    Checks out an existing feature branch in the REAL repo before the
+    temp workspace is copied from it, so a resumed run's scratch copy
+    reflects everything already committed in previous runs instead of
+    the original base branch. Without this, the model would be shown
+    stale code missing prior progress, risking edits that conflict
+    with or duplicate already-completed work.
+
+    Tries a plain checkout first, then falls back to fetching the
+    branch from origin in case it only exists on the remote (e.g. a
+    previous run pushed it but this is a fresh clone). Returns True on
+    success, False if the branch genuinely could not be checked out.
+    """
+    def run_git(args):
+        try:
+            return subprocess.run(
+                ["git", *args], cwd=repo_path, capture_output=True, text=True
+            )
+        except FileNotFoundError as ex:
+            print(f"git is not available on PATH: {ex}")
+            return None
+
+    result = run_git(["checkout", branch_name])
+    if result is not None and result.returncode == 0:
+        return True
+
+    run_git(["fetch", "origin", branch_name])
+    result = run_git(["checkout", branch_name])
+    if result is not None and result.returncode == 0:
+        return True
+
+    if result is not None:
+        print(f"git checkout output:\n{result.stderr}")
+    return False
+
 
 async def main():
     # ---------------------------------------------------------
@@ -105,6 +144,39 @@ async def main():
     root = Path(__file__).parent.parent
     ado_server_path = str(root / "mcp-servers" / "ado" / "server.js")
     github_server_path = str(root / "mcp-servers" / "github" / "server.js")
+
+    # ---------------------------------------------------------
+    # Resume check
+    #
+    # Done BEFORE touching the temp workspace: if a previous run for
+    # this (repo, work item) got partway through and crashed, this
+    # picks the plan and progress back up instead of starting over
+    # from Work Item planning and Task 1. See run_state.py.
+    # ---------------------------------------------------------
+    run_state = RunState.load(repo_path, work_item_id)
+    resuming = run_state is not None
+
+    if resuming:
+        print(
+            f"\nFound previous progress for Work Item {work_item_id} on branch "
+            f"'{run_state.branch_name}' -- resuming instead of starting over.\n"
+        )
+
+        # The temp workspace is about to be recreated from whatever is
+        # currently checked out in the real repo. On a fresh run that's
+        # fine (it's the base branch). On a resume it needs to be the
+        # feature branch that prior runs already committed to,
+        # otherwise the model would be working from stale code missing
+        # everything already done.
+        if not _checkout_branch_for_resume(repo_path, run_state.branch_name):
+            print(
+                f"Could not check out existing branch '{run_state.branch_name}' "
+                f"in {repo_path}. Aborting resume so we don't risk generating "
+                f"edits against the wrong base.\n"
+                f"Check out that branch manually and re-run, or delete "
+                f"{run_state.path} to start this Work Item over from scratch."
+            )
+            return
 
     # ---------------------------------------------------------
     # Temp workspace
@@ -237,43 +309,92 @@ async def main():
             return
 
         # ---------------------------------------------------------
-        # 1. Fetch Work Item + Plan
+        # 1. Fetch Work Item + Plan (or resume an existing plan)
         # ---------------------------------------------------------
-        plan_result = await planner.plan_work_item(work_item_id=work_item_id)
-        plan = plan_result["plan"]
-        plan["id"] = work_item_id
-        # Used by build_pr_description() so the PR summary correctly
-        # says "backend"/"frontend"/"fullstack" instead of always
-        # defaulting to "backend".
-        plan["repo_type"] = repo_type
+        if resuming:
+            branch_name = run_state.branch_name
+            plan = {
+                "id": work_item_id,
+                "repo_type": repo_type,
+                "title": run_state.plan_title,
+                "tasks": [
+                    {"title": t["title"], "description": t["description"]}
+                    for t in run_state.tasks
+                ],
+            }
+        else:
+            plan_result = await planner.plan_work_item(work_item_id=work_item_id)
+            plan = plan_result["plan"]
+            plan["id"] = work_item_id
+            # Used by build_pr_description() so the PR summary correctly
+            # says "backend"/"frontend"/"fullstack" instead of always
+            # defaulting to "backend".
+            plan["repo_type"] = repo_type
+
         tasks = plan["tasks"]
 
         print(f"\nFetched Work Item {work_item_id}: {plan['title']}")
         print(f"Tasks: {[t['title'] for t in tasks]}")
 
         # ---------------------------------------------------------
-        # 2. Create feature branch
+        # 2. Create feature branch (skip if resuming -- it already
+        #    exists and was just checked out above)
         # ---------------------------------------------------------
-        branch_name = gitflow.make_branch_name(work_item_id, plan["title"])
-        print(f"\nCreating branch: {branch_name}")
-        await gitflow.create_branch(branch_name)
+        if resuming:
+            print(f"\nUsing existing branch: {branch_name}")
+        else:
+            branch_name = gitflow.make_branch_name(work_item_id, plan["title"])
+            print(f"\nCreating branch: {branch_name}")
+            await gitflow.create_branch(branch_name)
+
+            run_state = RunState(repo_path, work_item_id)
+            run_state.init_plan(branch_name, plan["title"], tasks)
 
         # ---------------------------------------------------------
         # 3. Task loop → decomposition → subtasks → commit
+        #
+        # Tasks and subtasks already marked done in run_state (from a
+        # previous run) are skipped entirely rather than re-executed.
+        # Subtask decomposition is only ever computed once per task
+        # and then persisted -- re-decomposing on resume could return
+        # a different breakdown than last time, since it's a fresh
+        # model call, which would make "already done" matching by
+        # title meaningless.
         # ---------------------------------------------------------
         task_memory = TaskMemory()
 
         for idx, task in enumerate(tasks, start=1):
+            task_state = run_state.get_task(task["title"])
+
+            if task_state and task_state["done"]:
+                print(f"\n=== Task {idx}/{len(tasks)}: {task['title']} (already completed, skipping) ===")
+                for s in (task_state.get("subtasks") or []):
+                    task_memory.add(task["title"], s["title"], [], notes="(completed in a previous run)")
+                continue
+
             print(f"\n=== Task {idx}/{len(tasks)}: {task['title']} ===")
 
-            subtasks = await decompose_task(
-                work_item_id,
-                plan["title"],
-                task,
-                repo_type,
-                model_config)
+            if task_state and task_state.get("subtasks"):
+                subtasks = [
+                    {"title": s["title"], "description": s["description"]}
+                    for s in task_state["subtasks"]
+                ]
+            else:
+                subtasks = await decompose_task(
+                    work_item_id,
+                    plan["title"],
+                    task,
+                    repo_type,
+                    model_config)
+                run_state.set_task_subtasks(task["title"], subtasks)
+                task_state = run_state.get_task(task["title"])
 
             for sub in subtasks:
+                if run_state.is_subtask_done(task["title"], sub["title"]):
+                    print(f"--- Subtask: {sub['title']} (already completed, skipping) ---")
+                    task_memory.add(task["title"], sub["title"], [], notes="(completed in a previous run)")
+                    continue
+
                 print(f"--- Subtask: {sub['title']} ---")
 
                 changed_files = await execute_subtask(
@@ -299,52 +420,64 @@ async def main():
                     print(f"--- Subtask '{sub['title']}' produced no file changes; skipping commit ---")
 
                 task_memory.add(task["title"], sub["title"], changed_files, notes="")
+                run_state.mark_subtask_done(task["title"], sub["title"])
 
         # ---------------------------------------------------------
         # 3b. Verify build and test
         # ---------------------------------------------------------
-        validator = BuildTestValidator(
-            repo_path=repo_path,
-            temp_workspace=temp_workspace,
-            max_fix_attempts=3,
-            repo_type=repo_type,
-            enforcer=enforcer,
-            model_config=model_config
-        )
+        if resuming and run_state.validated:
+            print("\nBuild and test validation already passed in a previous run; skipping.")
+            ok, message = True, "Already validated in a previous run"
+        else:
+            validator = BuildTestValidator(
+                repo_path=repo_path,
+                temp_workspace=temp_workspace,
+                max_fix_attempts=3,
+                repo_type=repo_type,
+                enforcer=enforcer,
+                model_config=model_config
+            )
 
-        ok, message = await validator.run_validation()
+            ok, message = await validator.run_validation()
 
-        if not ok:
-            print(f"Build and test validation failed: {message}")
-            return
+            if not ok:
+                print(f"Build and test validation failed: {message}")
+                return
 
-        print(f"Build and test validation succeeded: {message}")
+            print(f"Build and test validation succeeded: {message}")
+            run_state.mark_validated()
 
         # ---------------------------------------------------------
-        # 4. Push branch
+        # 4/5. Push branch + open PR (skip if a previous run already
+        #      got a PR opened)
         # ---------------------------------------------------------
-        print(f"\nPushing branch: {branch_name}")
-        await gitflow.push_branch(branch_name)
+        if run_state.pr_url:
+            print(f"\nPR already opened in a previous run: {run_state.pr_url}")
+            pr_url = run_state.pr_url
+        else:
+            print(f"\nPushing branch: {branch_name}")
+            await gitflow.push_branch(branch_name)
 
-        # ---------------------------------------------------------
-        # 5. Open PR
-        # ---------------------------------------------------------
-        print("\nOpening Pull Request...")
-        pr_body = build_pr_description(plan, task_memory, message)
+            print("\nOpening Pull Request...")
+            pr_body = build_pr_description(plan, task_memory, message)
 
-        pr_url = await gitflow.open_pull_request(
-            branch_name,
-            plan["title"],
-            pr_body,
-        )
+            pr_url = await gitflow.open_pull_request(
+                branch_name,
+                plan["title"],
+                pr_body,
+            )
 
-        print(f"PR created: {pr_url}")
+            print(f"PR created: {pr_url}")
+            run_state.mark_pr_opened(pr_url)
 
         # ---------------------------------------------------------
         # 6. Link PR to Work Item
         # ---------------------------------------------------------
         print("\nLinking PR to Work Item...")
         await ado.link_pr(work_item_id, pr_url)
+
+        # Fully done -- nothing left to resume.
+        run_state.clear()
 
         # ---------------------------------------------------------
         # Final output

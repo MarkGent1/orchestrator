@@ -29,14 +29,15 @@ def detect_backend(repo_path: Path) -> Path | None:
 
 # ---------------------------------------------------------
 # Frontend detection
+#
+# Repos are always single-type with src/ and tests/ directly at the
+# repository root -- there is no "frontend/" subfolder convention and
+# no monorepo case to support here, so this only ever looks for
+# package.json at the repo root.
 # ---------------------------------------------------------
 def detect_frontend(repo_path: Path) -> Path | None:
     if (repo_path / "package.json").exists():
         return repo_path
-
-    fe = repo_path / "frontend"
-    if (fe / "package.json").exists():
-        return fe
 
     return None
 
