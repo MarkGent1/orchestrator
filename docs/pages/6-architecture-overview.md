@@ -73,7 +73,8 @@ ADO Work Item linked to PR
 
 *   Reads Work Item    
 *   Validates quality    
-*   Generates plan    
+*   Reuses an existing plan if the Work Item already has child tasks (idempotent)
+*   Generates plan (only if none exists yet)
 *   Creates child tasks    
 *   Adds comments    
 *   Updates Work Item state    
@@ -97,6 +98,7 @@ ADO Work Item linked to PR
 *   Auto‑fix    
 *   Retry    
 *   Only push if green    
+*   Backend, frontend, and fullstack repos all supported
 
 ### Module 4 — Multi‑Phase SDLC Loop
 
@@ -116,6 +118,14 @@ This ensures:
 *   Your real repo is never corrupted    
 *   FixLoop cannot break your working tree    
 *   All changes are validated before PR creation    
+
+## 5.3.1 Persisted Run State (Resume From a Crash)
+
+Unlike `.orchestrator-tmp/` — which is wiped and recreated at the start of every run — progress is also persisted outside the target repo entirely, so it survives a crash:
+
+    <orchestrator-dir>/.orchestrator-state/<repo-key>-<work_item_id>.json
+
+This tracks the branch name, the task plan, each task's subtask breakdown, per-subtask completion, validation status, and the PR URL once opened. Re-running the same command after a crash automatically detects this file, checks out the existing branch, and resumes from the first unfinished subtask instead of starting over. See [Resume From a Crash](./14-resume-from-crash.md) for the full picture.
 
 ## 5.4 FixLoop Architecture
 
@@ -150,13 +160,18 @@ This prevents AI from “inventing” architecture.
       validator.py
       fix_loop.py
       file_editing.py
+      prompt_builder.py
+      repo_type.py
+      preflight_validator.py
+      run_state.py
     
       # Work Item Planning
       work_item_planning.py
-      ado_mcp_client.py
     
-      # GitHub + Git
-      github_mcp_client.py
+      # GitHub + Git + ADO MCP clients
+      mcp_servers/
+        ado_mcp_client.py
+        github_mcp_client.py
       git_workflow.py
       pr_enhancer.py
     
@@ -182,9 +197,24 @@ This prevents AI from “inventing” architecture.
       # Utilities
       utils/
         path_normalization.py
+        path_unifier.py
+        json_extractor.py
+        json_sanitizer.py
+        json_validator.py
         repo_scanner.py
         tree_visualiser.py
         copy_repo.py
+    
+      # Tests
+      tests/
+        conftest.py
+        test_*.py
+    
+      pytest.ini
+      requirements-dev.txt
+    
+      # Runtime-only, not checked in
+      .orchestrator-state/   (persisted run state, see 5.3.1)
     
 ## 5.7 End‑to‑End Flow Diagram
 

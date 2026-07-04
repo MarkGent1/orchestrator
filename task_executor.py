@@ -15,10 +15,6 @@ async def execute_subtask(
     enforcer: CleanArchitectureEnforcer,
     model_config: object
 ):
-    print("DEBUG: prompt_builder repo_path =", workspace_path)
-    print("DEBUG: exists =", workspace_path.exists())
-    print("DEBUG: children =", list(workspace_path.iterdir()))
-
     # ---------------------------------------------------------
     # Build the prompt for OpenCode (MUST use temp workspace)
     # ---------------------------------------------------------
@@ -56,12 +52,29 @@ async def execute_subtask(
     # looked at "instructions" at all -- a model-issued "delete" would
     # have silently overwritten the file with (likely empty) content
     # instead of removing it.
+    #
+    # A ValueError here means the model proposed something Clean
+    # Architecture enforcement rejects (illegal path, new module,
+    # malformed edit, etc). That's a real problem with THIS subtask's
+    # output, but not a reason to crash the whole multi-task run --
+    # everything already committed for earlier subtasks stays intact,
+    # and this subtask is simply treated the same as one that produced
+    # no changes (matching the existing "no file changes" skip-commit
+    # path in main.py). Resuming after a fix (e.g. improving the
+    # prompt) will re-run just this subtask, same as any other
+    # unfinished one.
     # ---------------------------------------------------------
-    changed_files = apply_file_edits_for_task(
-        workspace_path,
-        file_edits,
-        repo_type,
-        enforcer=enforcer,
-    )
+    try:
+        changed_files = apply_file_edits_for_task(
+            workspace_path,
+            file_edits,
+            repo_type,
+            enforcer=enforcer,
+        )
+    except ValueError as ex:
+        print(
+            f"--- Subtask '{subtask['title']}' produced an invalid edit and was skipped: {ex} ---"
+        )
+        return []
 
     return changed_files

@@ -28,10 +28,13 @@ A repo must have:
 
 ### ✔ A deterministic folder structure
 
+Repos must be **single-type**, with `src/` and `tests/` directly at the repo root. There is no support for a nested `frontend/`/`backend/` subfolder convention, and no monorepo support — repo type is auto-detected purely from what's at the root (a `.sln`/`.slnx`/`.csproj` → backend, a root `package.json` → frontend; both at once → fullstack).
+
 Backend:
 
     src/<ModuleName>/
-    tests/<ModuleName>.Tests/
+    tests/<ModuleName>.Unit.Tests/
+    tests/<ModuleName>.Integration.Tests/
     
 
 Frontend:
@@ -39,6 +42,7 @@ Frontend:
     src/
     pages/ or app/
     components/
+    tests/
     
 
 ### ✔ A GitHub repo
@@ -157,6 +161,14 @@ Update `enforcement.py`.
 ### ❌ PR not created
 
 Run in full mode, not ORCH_TEST_ONLY.
+
+### ❌ Repo has both a .sln and a package.json but isn't really fullstack
+
+Detection treats both signals present as `"fullstack"` and runs both validation pipelines. If that's a false positive (e.g. a .NET repo with a root `package.json` used purely for tooling), that's a genuine edge case worth flagging — the detection intentionally doesn't guess in this situation.
+
+### ❌ A run crashed partway through onboarding
+
+Just re-run the same command — see [Resume From a Crash](./14-resume-from-crash.md). Progress (branch, completed tasks/subtasks, validation status) is preserved automatically.
 
 ## 4. Best Practices
 

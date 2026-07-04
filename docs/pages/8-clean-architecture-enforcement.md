@@ -62,6 +62,18 @@ Every file edit must:
     src/Controllers/UserController.cs
     src/UserMgmt/NewFolder/Whatever.cs
     src/NewModule/...
+    src/UserMgmt.Tests/...          <- tests do not belong under src/, see 7.7.1
+
+## 7.7.1 Test File Placement
+
+`tests/` is exempt from the module-boundary check above — anything under it is allowed, since test projects don't follow the same `src/<Module>/` layout. That exemption used to be a blind spot: the repo tree shown to the model previously excluded `tests/` entirely (to keep prompt size down), so the model had no way to see that an existing test project — e.g. `tests/UserMgmt.Unit.Tests/` — already existed. Asked to add a unit test, it would invent a brand-new test project under `src/` instead, which the module-boundary check above then correctly (but unhelpfully) rejected, crashing the run.
+
+Two things now prevent this:
+
+*   The repo tree shown to the model **does** include `tests/` paths (though not the file *content* inside them, which is still kept out of the prompt to control size).
+*   The prompt includes an explicit **Test Placement Rules** block: reuse an existing test project matching the module, follow its existing folder/namespace conventions, and never create a new test project, `.csproj`, or top-level folder for tests.
+
+If the model still proposes an illegal path despite this, that single edit is skipped (see [Troubleshooting](./9-troubleshooting.md)) rather than crashing the whole run.
 
 ## 7.8 Summary
 

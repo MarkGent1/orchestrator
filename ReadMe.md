@@ -1,7 +1,7 @@
 # Table of Contents
 
 1. [Overview](README.md)
-2. [Advancing the Orchestrator](docs/pages/1-localfs-mcp-server.md)
+2. [Advancing the Orchestrator](docs/pages/1-advancing-the-orchestrator.md)
 3. [Module 1: Work Item + Plan + Tasks](docs/pages/2-module-1.md)
 4. [Module 2: Branch + PR Automation](docs/pages/3-module-2.md)
 5. [Module 3: Build, Test, Lint, Format & Auto‑Fix Validation](docs/pages/4-module-3.md)
@@ -14,6 +14,7 @@
 12. [How to Extend the Orchestrator](docs/pages/11-extend-the-orchestrator.md)
 13. [How to Onboard New Repos](docs/pages/12-onboard-new-repos.md)
 14. [Model Capabilities](docs/pages/13-model-capabilities.md)
+15. [Resume From a Crash](docs/pages/14-resume-from-crash.md)
 
 # Overview
 
@@ -66,6 +67,7 @@ This makes the orchestrator a **true multi‑agent SDLC engine**.
 - Generates a structured task plan  
 - Validates Work Item quality  
 - Adds comments back to ADO  
+- Idempotent: if the Work Item already has child tasks (e.g. from a previous run), reuses that plan instead of generating and creating a duplicate one
 
 ## 2. Task Decomposition (GPT‑5.4‑mini)
 
@@ -123,6 +125,20 @@ The orchestrator copies your repo into:
 All code generation, builds, tests, and fixes happen **inside the temp workspace**.
 
 Your real repo is untouched until the PR is created.
+
+---
+
+## Resume From a Crash
+
+Every run persists its progress — branch name, task plan, subtask breakdown, per-subtask completion, validation status, and PR URL — to:
+
+```
+<orchestrator-dir>/.orchestrator-state/<repo-key>-<work_item_id>.json
+```
+
+If a run crashes partway through (bad model output, a build that exhausts FixLoop's retry budget, an MCP timeout, etc.), just **re-run the exact same command**. The orchestrator detects the existing state, checks out the same feature branch, and picks up from the first unfinished subtask — skipping re-planning, branch creation, and every task/subtask already completed and committed. Once a run fully completes (PR opened and linked), its state file is deleted.
+
+See [Resume From a Crash](docs/pages/14-resume-from-crash.md) for the full details, including how to discard progress and start a Work Item over from scratch.
 
 ---
 
@@ -208,6 +224,13 @@ OPENAI_API_KEY=XXXX
 
 # 🧩 Supported Repo Types
 
+Repos are expected to be **single-type**, with `src/` and `tests/` directly at the repository root. There is no support for a nested `frontend/`/`backend/` subfolder convention, and no monorepo support — repo type is detected purely from what exists at the root:
+
+ * **Backend** — a `.sln`/`.slnx` at the root, or a `.csproj` anywhere under the repo
+ * **Frontend** — a `package.json` at the root
+ * **Fullstack** — both signals present at once (runs both validation pipelines)
+ * **Unknown** — neither signal found (pre-flight fails with a clear message)
+
 ## Backend (.NET)
 
  * Clean Architecture
@@ -232,18 +255,24 @@ OPENAI_API_KEY=XXXX
 
 ```
 orchestrator/
-  opencode/
-  openai/
-  utils/  
+  opencode_client/
+  openai_client/
+  utils/
   architecture/
-  mcp-servers/
+  mcp_servers/
+  tests/
 
   main.py
   validator.py
   fix_loop.py
   file_editing.py
   model_selector.py
-  model_constants.py  
+  model_constants.py
+  run_state.py
+  repo_type.py
+  preflight_validator.py
+  prompt_builder.py
+  git_workflow.py
   backend_build.py
   backend_test.py
   frontend_build.py
@@ -253,12 +282,29 @@ orchestrator/
   task_decomposer.py
   task_executor.py
   task_memory.py
+  work_item_planning.py
   pr_enhancer.py
+
+  pytest.ini
+  requirements-dev.txt
 ```
+
+`.orchestrator-tmp/` (inside the target repo) and `.orchestrator-state/` (inside `orchestrator/`) are both created at runtime and are not part of the checked-in project structure.
+
+# 🧪 Testing the Orchestrator Itself
+
+The orchestrator has its own pytest suite under `tests/`, covering the JSON extraction/sanitization pipeline, path casing normalization, repo-type detection, Clean Architecture enforcement, the MCP clients, the resume/state persistence, and a full crash-then-resume end-to-end scenario. Everything is mocked (no real LLM/ADO/GitHub/dotnet/npm calls), so it runs in a couple of seconds:
+
+```
+pip install -r requirements-dev.txt
+pytest
+```
+
+Run this before merging any change to the orchestrator itself.
 
 # 🔧 Requirements
 
- * Python 3.10+
+ * Python 3.10+ (some modules use `pathlib.Path.walk()`, which requires Python 3.12+ — the project's own `.venv` should target 3.12 or newer)
  * .NET SDK (for backend repos)
  * Node.js (for frontend repos)
  * GitHub MCP server

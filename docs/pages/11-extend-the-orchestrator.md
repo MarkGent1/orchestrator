@@ -259,6 +259,21 @@ Once Azure MCP is added, you can extend:
     
 This becomes Module 5.
 
+## 5.5 Add Tests for Your Extension
+
+The orchestrator has its own pytest suite under `tests/`, unrelated to the build/test validation it runs against *target* repos — this is testing the orchestrator's own code. When you add a new module (a new validation phase, a new repo type, a new MCP client method, etc.), add a matching `tests/test_<module>.py`.
+
+Conventions used throughout the existing suite:
+
+*   No `pytest-asyncio` dependency — async functions are called via `asyncio.run(...)` directly inside ordinary `def test_...():` functions.
+*   External calls (LLM APIs, ADO, GitHub, `dotnet`/`npm`, Node MCP servers) are always mocked via `monkeypatch` — nothing in the suite makes real network calls.
+*   Shared fixtures (`backend_repo`, `frontend_repo`, `model_config`) live in `tests/conftest.py`.
+*   `tests/fixtures/fake_mcp_server.py` is a small Python stand-in JSON-RPC server used to test `AdoMcpClient`/`GithubMcpClient`'s process/pipe handling without requiring Node.js.
+
+Run the whole suite with:
+
+    pytest
+
 ## 6. Best Practices for Extensions
 
 ### ✔ Keep modules isolated
@@ -292,6 +307,7 @@ This page gives you a complete blueprint for extending the orchestrator safely:
 *   Add new PR enhancements    
 *   Add new SDLC phases    
 *   Add new FixLoop capabilities
+*   Add tests for anything you add
     
 Your orchestrator is now a **platform**, not a script — and this page shows how to grow it cleanly.
 

@@ -41,6 +41,29 @@ EXCLUDED_DIRS = {
     "build",
 }
 
+# Used only for the repo TREE shown to the model (paths only, no file
+# content) -- unlike EXCLUDED_DIRS above, this does NOT exclude
+# "tests". Excluding tests/ from collect_relevant_files() keeps full
+# file content out of the prompt (existing test suites can be large),
+# but excluding it from the tree too made every existing test project
+# under tests/ invisible to the model. When asked to "add a unit
+# test", the model had no way to see that e.g.
+# tests/Mav.UserMgmt.Api.Unit.Tests/ already exists and would invent a
+# brand new test project under src/ instead -- which Clean
+# Architecture enforcement then correctly rejects as an illegal new
+# module, crashing the run. Showing the tree (without the content)
+# is enough for the model to place new test files alongside the
+# existing ones.
+TREE_EXCLUDED_DIRS = {
+    "bin",
+    "obj",
+    ".github",
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+}
+
 EXCLUDED_EXTS = {
     ".md",
     ".yml",
@@ -130,7 +153,7 @@ async def build_opencode_prompt_for_task(
     # ---------------------------------------------------------
     tree_entries = []
     for root, dirs, files in repo_path.walk():
-        dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
+        dirs[:] = [d for d in dirs if d not in TREE_EXCLUDED_DIRS]
         for name in dirs + files:
             tree_entries.append(str((Path(root) / name).relative_to(repo_path)))
             if len(tree_entries) >= 150:
@@ -160,6 +183,31 @@ You MUST NOT place backend code outside its module.
 """
 
     # ---------------------------------------------------------
+    # Test placement rules
+    #
+    # tests/ is exempt from Clean Architecture's module-boundary check
+    # (CleanArchitectureEnforcer allows anything under tests/), so
+    # without explicit guidance the model has no signal for WHERE
+    # inside tests/ new test files belong, or that it must reuse an
+    # existing test project rather than inventing one. The repo tree
+    # above now includes the tests/ folder specifically so the model
+    # can see existing test project names/paths to match.
+    # ---------------------------------------------------------
+    test_placement_rules = """
+### Test Placement Rules (MANDATORY)
+- Test files belong under an EXISTING test project inside tests/ (see
+  the Repository Tree above for the exact existing project names,
+  e.g. tests/<Module>.Unit.Tests/, tests/<Module>.Integration.Tests/).
+- Match the existing project's folder structure and namespace
+  convention for the file you are adding (e.g. a test for
+  Controllers/FooController.cs typically belongs under that project's
+  Controllers/ subfolder).
+- You MUST NOT create a new test project, a new .csproj/package.json,
+  or any new top-level folder for tests. If no existing test project
+  looks like a fit, add the file to the closest existing one instead.
+"""
+
+    # ---------------------------------------------------------
     # Backend rules
     # ---------------------------------------------------------
     backend_rules = f"""
@@ -173,12 +221,14 @@ You MUST NOT place backend code outside its module.
 - NEVER generate JS/TS/Python.
 
 {module_rules}
+
+{test_placement_rules}
 """
 
     # ---------------------------------------------------------
     # Frontend rules
     # ---------------------------------------------------------
-    frontend_rules = """
+    frontend_rules = f"""
 ### Frontend (React / Next.js / TypeScript) Rules
 - Use functional components.
 - Use TypeScript strict mode.
@@ -186,6 +236,8 @@ You MUST NOT place backend code outside its module.
 - Use app router conventions.
 - Generate ONLY .ts/.tsx files.
 - NEVER generate C# code.
+
+{test_placement_rules}
 """
 
     # ---------------------------------------------------------

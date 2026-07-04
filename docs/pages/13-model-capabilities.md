@@ -220,3 +220,5 @@ This is a **true multi‑agent SDLC engine**, designed for reliability, speed, a
 [<< Overview](../../README.md)
  | 
 [<< How to Onboard New Repos](./12-onboard-new-repos.md)
+ | 
+[Resume From a Crash >>](./14-resume-from-crash.md)
