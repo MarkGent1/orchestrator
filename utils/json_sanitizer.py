@@ -8,6 +8,19 @@ class JsonSanitizer:
 
     @staticmethod
     def sanitize(text: str) -> str:
+        # If this already parses as valid JSON, leave it alone.
+        # The regex-based "content" repair below is a best-effort
+        # fallback for genuinely malformed output; it is not aware
+        # of escaped quotes (e.g. C# attributes like [Route("x")]
+        # or string literals in code), so running it on already-
+        # valid JSON truncates those content strings and corrupts
+        # otherwise-good output.
+        try:
+            json.loads(text)
+            return text
+        except Exception:
+            pass
+
         # Fix broken escape sequences
         text = text.replace("\\\n", "\n")
         text = text.replace("\\\t", "\t")
