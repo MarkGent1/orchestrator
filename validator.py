@@ -84,8 +84,23 @@ class BuildTestValidator:
         for attempt in range(1, self.max_fix_attempts + 1):
             print(f"\n=== Fix attempt {attempt} for {phase_name} errors ===")
 
-            # FixLoop now uses dynamic model selection
-            fixes = await self.fix_loop.attempt_fix(error_output)
+            # FixLoop now uses dynamic model selection. attempt_fix()
+            # itself validates each proposed edit's path against Clean
+            # Architecture rules and raises ValueError on an illegal
+            # one -- this used to propagate all the way out of
+            # run_validation() and crash the whole orchestrator run,
+            # the same "Illegal raw path from model" failure mode that
+            # task_executor.py was fixed for. Contain it here instead:
+            # treat an illegal proposal as a failed attempt and let the
+            # loop retry, rather than losing all validation progress.
+            try:
+                fixes = await self.fix_loop.attempt_fix(error_output)
+            except ValueError as ex:
+                print(
+                    f"--- Fix attempt {attempt} for {phase_name} proposed an invalid "
+                    f"edit and was skipped: {ex} ---"
+                )
+                continue
 
             if not fixes:
                 return False, f"No fix possible for {phase_name} errors"
@@ -100,12 +115,24 @@ class BuildTestValidator:
             # already-PascalCased name on the second pass), so this
             # previously risked mangling freshly-created folder names
             # in the fix-loop path specifically.
-            apply_file_edits_for_task(
-                self.temp_workspace,
-                fixes,
-                self.repo_type,
-                enforcer=self.enforcer,
-            )
+            #
+            # This can also raise ValueError (a path that only becomes
+            # illegal after casing normalization, bad content type, an
+            # unknown instruction, etc.) -- contained the same way as
+            # the attempt_fix() call above.
+            try:
+                apply_file_edits_for_task(
+                    self.temp_workspace,
+                    fixes,
+                    self.repo_type,
+                    enforcer=self.enforcer,
+                )
+            except ValueError as ex:
+                print(
+                    f"--- Fix attempt {attempt} for {phase_name} produced an invalid "
+                    f"edit and was skipped: {ex} ---"
+                )
+                continue
 
             ok, output = runner(self.temp_workspace)
             print(f"\n=== {phase_name.upper()} OUTPUT (after fix) ===\n{output}\n")

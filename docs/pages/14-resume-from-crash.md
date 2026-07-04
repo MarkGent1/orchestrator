@@ -73,9 +73,9 @@ The next run for that `(repo, work item)` pair will behave as if it had never be
 
 Work Item planning itself is separately idempotent: if the Work Item already has child tasks linked (from a previous orchestrator run, or created manually), planning reuses them instead of asking the model again and creating duplicates. This is a best-effort, fails-open check — see [Module 1](./2-module-1.md) — and works alongside resume rather than replacing it: resume state is what lets an *in-progress* run pick up mid-task-loop; the ADO child-task check is what prevents a *completed or restarted* planning phase from generating a second, duplicate plan.
 
-# 14.8 Known Limitation
+# 14.8 Crash-Containment Coverage
 
-The crash-containment fix that lets a single invalid model edit be skipped instead of crashing the whole run (see [Troubleshooting](./9-troubleshooting.md)) currently only covers the main task-execution path (`task_executor.py`). The FixLoop retry path (`validator.py` → `fix_loop.py`) does not yet have the same protection — an illegal path proposed *during* a FixLoop retry can still crash the run. If that happens, resume will pick the run back up at that same validation step, but consider it a residual gap worth closing if it comes up in practice.
+The crash-containment fix that lets a single invalid model edit be skipped instead of crashing the whole run (see [Troubleshooting](./9-troubleshooting.md)) covers both places an illegal path can come from: the main task-execution path (`task_executor.py`) and the FixLoop retry path (`validator.py` → `fix_loop.py`). Either one catches the `ValueError`, logs it clearly, and treats it as a failed attempt rather than a fatal crash — task execution moves on to the next subtask, and FixLoop moves on to its next retry attempt (or reports "fix loop exhausted" if attempts run out, same as any other unfixable error). Resume still applies on top of this: if a run does crash for some other reason, re-running the same command picks up from the first unfinished subtask as described above.
 
 [<< Overview](../../README.md)
  |

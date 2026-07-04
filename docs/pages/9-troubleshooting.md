@@ -111,9 +111,7 @@ The model was asked to add tests and, unable to see that an existing test projec
 
 This is fixed at the source: the repo tree shown to the model now includes `tests/` paths (see [Clean Architecture Enforcement Rules § 7.7.1](./8-clean-architecture-enforcement.md)) and the prompt includes explicit test-placement rules.
 
-If it happens anyway (or for any other illegal-path edit from the model), it's no longer fatal: `task_executor.py` catches the error, logs it clearly, and treats that one subtask as if it produced no changes — the run continues and resume will retry just that subtask later if needed.
-
-**Known gap:** this containment currently only covers the main task-execution path. An illegal path proposed *during a FixLoop retry* (i.e. while fixing a build/test failure) can still crash the run the same way this used to.
+If it happens anyway (or for any other illegal-path edit from the model), it's no longer fatal in either place it can occur: `task_executor.py` catches the error during normal task execution and treats that one subtask as if it produced no changes, and `validator.py`'s FixLoop retry path (`_fix_and_retry()`) catches the same error during a build/test fix attempt and treats it as a failed attempt, moving on to the next retry (or reporting "fix loop exhausted" if attempts run out). Either way, the run continues and resume will retry just that subtask or validation step later if needed.
 
 ## 8.11 Summary
 

@@ -20,6 +20,8 @@ class FakeFixLoop:
     async def attempt_fix(self, error_output):
         response = self.responses[self.calls] if self.calls < len(self.responses) else []
         self.calls += 1
+        if isinstance(response, Exception):
+            raise response
         return response
 
 
@@ -121,6 +123,73 @@ def test_fix_loop_exhausted_after_max_attempts(monkeypatch, tmp_path, backend_re
     assert ok is False
     assert "Fix loop exhausted" in message
     assert len(build_runner.calls) == 3  # initial + 2 retries
+
+
+def test_fix_loop_illegal_path_from_attempt_fix_is_skipped_not_fatal(
+    monkeypatch, tmp_path, backend_repo, model_config, patch_fix_loop
+):
+    """
+    Regression test: FixLoop.attempt_fix() raises ValueError when the
+    model proposes a path that violates Clean Architecture rules. This
+    used to propagate out of run_validation() and crash the whole
+    orchestrator process. It should now be treated as a failed attempt
+    (logged, then retried) -- not fatal -- exactly like the equivalent
+    fix already shipped for task_executor.py.
+    """
+    good_edits = [{"file": "src/UserModule/Foo.cs", "instructions": "modify", "content": "fixed"}]
+    patch_fix_loop([ValueError("illegal path: src/NewModule/Foo.cs"), good_edits])
+
+    build_runner = _make_runner([(False, "build broke"), (True, "build ok now")])
+    monkeypatch.setattr(validator_module, "run_backend_build", build_runner)
+    monkeypatch.setattr(validator_module, "run_backend_tests", _make_runner([(True, "tests ok")]))
+
+    validator = BuildTestValidator(
+        repo_path=tmp_path, temp_workspace=backend_repo, repo_type="backend",
+        enforcer=CleanArchitectureEnforcer(backend_repo, "backend"), model_config=model_config,
+        max_fix_attempts=3,
+    )
+
+    ok, message = asyncio.run(validator.run_validation())
+    assert ok is True
+    assert (backend_repo / "src" / "UserModule" / "Foo.cs").read_text() == "fixed"
+    # First attempt raised and was skipped; second attempt succeeded.
+    assert len(build_runner.calls) == 2
+
+
+def test_fix_loop_illegal_path_from_apply_edits_is_skipped_not_fatal(
+    monkeypatch, tmp_path, backend_repo, model_config, patch_fix_loop
+):
+    """
+    Regression test: apply_file_edits_for_task() can also raise
+    ValueError (e.g. a path that only becomes illegal after casing
+    normalization). This must be contained the same way as an
+    attempt_fix() failure -- skip the attempt, keep the run alive.
+    """
+    illegal_edits = [{"file": "src/NewModule/Foo.cs", "instructions": "modify", "content": "bad"}]
+    good_edits = [{"file": "src/UserModule/Foo.cs", "instructions": "modify", "content": "fixed"}]
+    patch_fix_loop([illegal_edits, good_edits])
+
+    # The first attempt raises before ever calling the runner (it's
+    # rejected by apply_file_edits_for_task()), so the runner is only
+    # actually invoked twice: the initial build, then the retry after
+    # the second (legal) attempt.
+    build_runner = _make_runner([(False, "build broke"), (True, "build ok now")])
+    monkeypatch.setattr(validator_module, "run_backend_build", build_runner)
+    monkeypatch.setattr(validator_module, "run_backend_tests", _make_runner([(True, "tests ok")]))
+
+    # FakeFixLoop bypasses FixLoop's own validation entirely, so the
+    # illegal edit reaches apply_file_edits_for_task() unfiltered, and
+    # that call's own enforcer check is what raises here.
+    validator = BuildTestValidator(
+        repo_path=tmp_path, temp_workspace=backend_repo, repo_type="backend",
+        enforcer=CleanArchitectureEnforcer(backend_repo, "backend"), model_config=model_config,
+        max_fix_attempts=3,
+    )
+
+    ok, message = asyncio.run(validator.run_validation())
+    assert ok is True
+    assert not (backend_repo / "src" / "NewModule").exists()
+    assert (backend_repo / "src" / "UserModule" / "Foo.cs").read_text() == "fixed"
 
 
 def test_frontend_validation_runs_all_four_phases(monkeypatch, tmp_path, frontend_repo, model_config, patch_fix_loop):
