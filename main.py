@@ -6,9 +6,9 @@ import subprocess
 import shutil
 from pathlib import Path
 
-from ado_mcp_client import AdoMcpClient
+from mcp_servers.ado_mcp_client import AdoMcpClient
 from work_item_planning import WorkItemPlanner
-from github_mcp_client import GithubMcpClient
+from mcp_servers.github_mcp_client import GithubMcpClient
 from git_workflow import GitWorkflow
 from validator import BuildTestValidator
 
