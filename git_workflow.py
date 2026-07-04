@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 import re
 
-from github_mcp_client import GithubMcpClient
+from mcp_servers.github_mcp_client import GithubMcpClient
 
 class GitWorkflow:
     def __init__(self, repo_path: Path, github: GithubMcpClient, repo_type: str):

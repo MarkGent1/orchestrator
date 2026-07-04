@@ -1,0 +1,27 @@
+sequenceDiagram
+    participant ADO as ADO Work Item
+    participant Planner as Module 1 - Planning (Claude Sonnet)
+    participant SDLC as Module 4 - SDLC Engine
+    participant Decomp as Task Decomposition (GPT-mini)
+    participant Exec as Subtask Execution (Claude Haiku)
+    participant Valid as Module 3 - Validation (FixLoop)
+    participant PR as Module 2 - PR Creation
+
+    ADO->>Planner: Fetch Work Item
+    Planner->>Planner: Generate Task Plan
+    Planner->>SDLC: Send Tasks
+
+    SDLC->>Decomp: Decompose Task
+    Decomp->>SDLC: Subtasks
+
+    SDLC->>Exec: Execute Subtask
+    Exec->>Exec: Multi-pass Refinement
+    Exec->>SDLC: File Edits + Commit
+
+    SDLC->>Valid: Run Build/Test/Lint/Format
+    Valid->>Valid: FixLoop (Claude Haiku)
+    Valid->>SDLC: Validation Result
+
+    SDLC->>PR: Push Branch
+    PR->>PR: Open PR + Enhance Description
+    PR->>ADO: Link PR to Work Item

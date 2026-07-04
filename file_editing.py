@@ -1,15 +1,32 @@
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from utils.path_normalization import normalize_path_casing
+from utils.path_unifier import unify_path
+
 
 def apply_file_edits_for_task(
     workspace_path: Path,
     file_edits: List[Dict[str, Any]],
-    repo_type: str
+    repo_type: str,
+    enforcer: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
     """
     Applies OpenCode file edits into the TEMP workspace only.
     Returns a list of changed files for GitHub MCP commitFiles.
+
+    This is the single place that interprets an edit's "instructions"
+    field ("create", "modify", "delete") and writes/deletes the file
+    accordingly. Both the main per-subtask execution path
+    (task_executor.py) and the FixLoop retry path (validator.py) route
+    through here so the two call sites can't drift out of sync -- e.g.
+    one silently ignoring "delete" instructions while the other honors
+    them.
+
+    If `enforcer` (a CleanArchitectureEnforcer) is provided, each edit's
+    path is validated twice: once on the raw path returned by the
+    model, and once more on the casing-normalized path -- matching the
+    two-stage check previously done ad hoc in task_executor.py. Pass
+    `enforcer=None` to skip path validation entirely.
     """
 
     changed_files = []
@@ -26,7 +43,26 @@ def apply_file_edits_for_task(
         if not path:
             raise ValueError(f"Edit has no path-like field: {edit}")
 
-        rel_path = normalize_path_casing(path, repo_type, workspace_root=workspace_path)
+        # Normalise the raw path (slashes, "./" prefixes, duplicate
+        # slashes) before any validation.
+        normalized_raw_path = unify_path(path)
+
+        if enforcer is not None and not enforcer.validate_path(normalized_raw_path):
+            raise ValueError(f"Illegal raw path from model: {normalized_raw_path}")
+
+        rel_path = normalize_path_casing(
+            normalized_raw_path, repo_type, workspace_root=workspace_path
+        )
+
+        # Second validation pass on the casing-normalized path. Only
+        # enforced for backend repos, matching the Clean Architecture
+        # module-boundary rules used elsewhere.
+        if enforcer is not None and repo_type == "backend":
+            if not enforcer.validate_path(rel_path):
+                raise ValueError(
+                    f"Illegal path generated under Clean Architecture rules: {rel_path}"
+                )
+
         full_path = workspace_path / rel_path
         action = edit.get("instructions", "modify")
 

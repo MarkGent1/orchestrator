@@ -4,55 +4,51 @@
                 │
                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                    MODULE 1 — PLANNING                        │
+│                 MODULE 1 — PLANNING (Claude Sonnet)           │
 │  WorkItemPlanner                                              │
 │  - Fetch Work Item                                            │
 │  - Generate plan (tasks)                                      │
+│  - Validate acceptance criteria                               │
 └───────────────┬──────────────────────────────────────────────┘
                 │
                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│               MODULE 2 — TASK EXECUTION                       │
-│  GitWorkflow                                                  │
-│  - Create feature branch                                      │
+│           MODULE 4 — SDLC ENGINE (Multi‑Agent Core)           │
 │                                                               │
-│  Task Loop                                                    │
-│  - Build prompt                                               │
-│  - Call OpenCode                                              │
-│  - Apply file edits                                           │
-│  - Commit per task                                            │
-└───────────────┬──────────────────────────────────────────────┘
-                │
-                ▼
-┌──────────────────────────────────────────────────────────────┐
-│               MODULE 4 — SDLC ENGINE                          │
-│  Task Decomposition                                           │
+│  Task Decomposition (GPT‑5.4‑mini)                            │
 │  - Break tasks into subtasks                                  │
 │                                                               │
-│  Subtask Execution                                            │
-│  - Execute subtasks                                           │
-│  - Multi-pass refinement                                      │
-│  - Commit per subtask                                         │
+│  Subtask Execution (Claude Haiku)                             │
+│  - Build repo‑aware prompt                                    │
+│  - Generate file edits                                         │
+│  - Multi‑pass refinement                                       │
+│  - Commit per subtask                                          │
 │                                                               │
-│  Task Memory                                                  │
+│  Task Memory                                                   │
 │  - Track changed files, fixes, context                        │
 └───────────────┬──────────────────────────────────────────────┘
                 │
                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│               MODULE 3 — VALIDATION                           │
+│               MODULE 3 — VALIDATION (Claude Haiku)            │
 │  BuildTestValidator                                           │
 │  - Detect repo type                                           │
 │  - Backend: build + test                                      │
 │  - Frontend: build + test + lint + format                     │
-│  - Auto-fix loop (FixLoop)                                    │
+│                                                               │
+│  Auto‑Fix Loop (FixLoop — Claude Haiku)                       │
+│  - Generate minimal fixes                                     │
+│  - Validate with Clean Architecture rules                     │
+│  - Apply safely in temp workspace                             │
+│  - Re‑run failing phase                                       │
 │  - Only proceed if clean                                      │
 └───────────────┬──────────────────────────────────────────────┘
                 │
                 ▼
 ┌──────────────────────────────────────────────────────────────┐
-│                     PR CREATION                               │
+│                     MODULE 2 — PR CREATION                    │
 │  GitWorkflow                                                  │
+│  - Create feature branch                                      │
 │  - Push branch                                                │
 │  - Open PR                                                    │
 │                                                               │

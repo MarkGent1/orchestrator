@@ -444,6 +444,14 @@ GITHUB_TOKEN=XXXX
 }
 ```
 
+## 1.5. Idempotent Planning
+
+The production `WorkItemPlanner.plan_work_item()` does one thing beyond what the stub above shows: before asking the model for a plan, it checks whether the Work Item **already has child tasks** linked to it (via the standard ADO `System.LinkTypes.Hierarchy-Forward` relation). If it does — because a previous orchestrator run already planned it, or someone created them manually — it reuses that existing plan instead of generating and creating a second, duplicate one.
+
+This matters most in combination with [resume from a crash](./14-resume-from-crash.md): if a run is re-invoked after planning already succeeded (whether because the whole run previously crashed, or you're intentionally re-running a Work Item), planning doesn't create duplicate child tasks or post a second "plan generated" comment.
+
+This check is best-effort and **fails open**: it depends on the ADO MCP server's `getWorkItem` response actually including `relations` (which requires requesting `$expand=relations` server-side). If your MCP server doesn't return relations in that shape, this check simply finds nothing and planning proceeds exactly as it did before the check existed.
+
 [<< Overview](../../README.md)
  | 
 [<< Advancing the Orchestrator](./1-advancing-the-orchestrator.md)

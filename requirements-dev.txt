@@ -1,0 +1,3 @@
+# Test-only dependencies. Install with: pip install -r requirements-dev.txt
+# (in addition to the project's normal runtime dependencies).
+pytest>=8.0

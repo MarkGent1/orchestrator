@@ -1,13 +1,14 @@
 from typing import List, Dict, Any
 from pathlib import Path
 
-from opencode.client import call_opencode
+from model_selector import select_model_for_fixloop, call_model
 from architecture.enforcement import CleanArchitectureEnforcer
 
 
 class FixLoop:
     """
-    Given build/test errors, asks OpenCode to generate file edits that fix them.
+    Given build/test errors, asks the selected model (Claude or OpenAI)
+    to generate file edits that fix them.
     """
 
     def __init__(
@@ -16,13 +17,18 @@ class FixLoop:
         max_attempts: int = 3,
         repo_type: str = None,
         enforcer: CleanArchitectureEnforcer = None,
+        model_config: object = None
     ):
         self.repo_path = Path(repo_path)      # temp workspace
         self.max_attempts = max_attempts
         self.repo_type = repo_type            # backend or frontend
         self.enforcer = enforcer              # Clean Architecture enforcement layer
+        self.model_config = model_config      # Dynamic model selection
 
     async def attempt_fix(self, error_output: str) -> List[Dict[str, Any]]:
+        # -----------------------------------------------------
+        # Build language + architecture rules
+        # -----------------------------------------------------
         if self.repo_type == "backend":
             language_rules = f"""
 ### CRITICAL LANGUAGE RULES
@@ -84,6 +90,9 @@ You MUST NOT generate C# code.
         else:
             language_rules = "### Unknown repo type — generate minimal safe fixes only."
 
+        # -----------------------------------------------------
+        # Build FixLoop prompt
+        # -----------------------------------------------------
         prompt = f"""
 You are OpenCode Fixer.
 
@@ -110,11 +119,22 @@ Each edit MUST have:
 Your output must ALWAYS be valid JSON.
 """
 
-        edits = await call_opencode(prompt)
+        # -----------------------------------------------------
+        # Dynamic model selection (Claude or OpenAI)
+        # -----------------------------------------------------
+        model, provider = select_model_for_fixloop(self.model_config)
+
+        # -----------------------------------------------------
+        # Call selected model
+        # -----------------------------------------------------
+        edits = await call_model(prompt, model, provider)
 
         if not isinstance(edits, list):
             raise TypeError(f"Expected a JSON array of edits, got: {type(edits)}")
 
+        # -----------------------------------------------------
+        # Validate edits against Clean Architecture rules
+        # -----------------------------------------------------
         safe_edits: List[Dict[str, Any]] = []
 
         for e in edits:

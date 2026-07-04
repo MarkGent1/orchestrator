@@ -42,10 +42,12 @@ It ensures the branch is safe to merge.
 
 # 3.4. Repo‑Type Aware Validation
 
-The orchestrator automatically detects repo type:
+The orchestrator automatically detects repo type from what exists at the **repository root** — repos are expected to be single-type, with `src/` and `tests/` directly at the root. There is no support for a nested `frontend/`/`backend/` subfolder convention and no monorepo support; those signals were previously checked and removed, since an unrelated folder that happened to be named `frontend` or `backend` could otherwise misclassify an ordinary single-type repo.
 
-    Backend  → .NET (.sln present)
-    Frontend → Node/React/Next.js (package.json present)
+    Backend    → .sln/.slnx at the root, or a .csproj anywhere under the repo
+    Frontend   → package.json at the root
+    Fullstack  → both signals present at once
+    Unknown    → neither signal found (pre-flight fails with a clear message)
 
 Each repo type has its own validation pipeline.
 
@@ -69,6 +71,10 @@ Code
     npm run lint
     npm run format
     (auto‑fix if needed)    
+
+## 3.5.3 Fullstack
+
+Runs the full backend pipeline followed by the full frontend pipeline — six phases in total. This exists specifically so a repo detected as `"fullstack"` doesn't fall through to the "Unknown repo type" failure that used to occur here; it now runs the same validation rigor as a pure backend or pure frontend repo, just for both halves.
 
 Each phase is atomic and can trigger FixLoop.
 
@@ -113,23 +119,27 @@ Each file has a **single responsibility**.
 
     build → test → lint → format
 
+### Fullstack phases
+
+    backend build → backend test → frontend build → frontend test → frontend lint → frontend format
+
 # 3.8. Auto‑Fix Loop (FixLoop)
 
 When a phase fails:
-1.  Capture error output    
-2.  Build a FixLoop prompt    
-3.  Send to OpenCode    
-4.  Receive JSON file edits    
-5.  Validate edits with Clean Architecture rules    
-6.  Apply edits safely    
-7.  Re‑run the failing phase    
+1.  Capture error output
+2.  Build a FixLoop prompt
+3.  Send to the **FixLoop Model (default: Claude Haiku)**
+4.  Receive JSON file edits
+5.  Validate edits with Clean Architecture rules
+6.  Apply edits safely
+7.  Re‑run the failing phase
 8.  Repeat until fixed or attempts exhausted
     
 If all attempts fail → **no PR is created**.
 
 # 3.9. FixLoop Prompt (Smart, Repo‑Aware)
 
-FixLoop instructs OpenCode to:
+FixLoop instructs the model to:
 *   Fix .NET build errors    
 *   Fix .NET test failures    
 *   Fix missing namespaces    

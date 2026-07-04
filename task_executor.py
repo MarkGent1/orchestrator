@@ -1,8 +1,7 @@
-from opencode.prompt_builder import build_opencode_prompt_for_task
-from opencode.client import call_opencode
-from utils.path_normalization import normalize_path_casing
+from prompt_builder import build_opencode_prompt_for_task
+from model_selector import select_model_for_task_execution, call_model
 from architecture.enforcement import CleanArchitectureEnforcer
-from utils.path_unifier import unify_path
+from file_editing import apply_file_edits_for_task
 
 
 async def execute_subtask(
@@ -13,12 +12,9 @@ async def execute_subtask(
     task,
     subtask,
     repo_type: str,
-    enforcer: CleanArchitectureEnforcer
+    enforcer: CleanArchitectureEnforcer,
+    model_config: object
 ):
-    print("DEBUG: prompt_builder repo_path =", workspace_path)
-    print("DEBUG: exists =", workspace_path.exists())
-    print("DEBUG: children =", list(workspace_path.iterdir()))
-
     # ---------------------------------------------------------
     # Build the prompt for OpenCode (MUST use temp workspace)
     # ---------------------------------------------------------
@@ -32,63 +28,53 @@ async def execute_subtask(
     )
 
     # ---------------------------------------------------------
-    # Call OpenCode to get file edits
+    # ⭐ Select model dynamically (Claude or OpenAI)
     # ---------------------------------------------------------
-    file_edits = await call_opencode(prompt)
-    changed_files = []
+    model, provider = select_model_for_task_execution(
+        subtask["title"],
+        repo_type,
+        model_config
+    )
 
     # ---------------------------------------------------------
-    # Apply edits to TEMP workspace
+    # ⭐ Call selected model (Claude or OpenAI)
     # ---------------------------------------------------------
-    for edit in file_edits:
-        path = (
-            edit.get("path")
-            or edit.get("file")
-            or edit.get("file_path")
-            or edit.get("new_file")
-            or edit.get("filename")
-        )
+    file_edits = await call_model(prompt, model, provider)
 
-        if not path:
-            raise ValueError(f"OpenCode edit has no path-like field: {edit}")
-
-        # -----------------------------------------------------
-        # NORMALISE RAW PATH BEFORE ANY VALIDATION
-        # -----------------------------------------------------
-        normalized_raw_path = unify_path(path)
-
-        # First validation: raw path
-        if not enforcer.validate_path(normalized_raw_path):
-            raise ValueError(f"Illegal raw path from OpenCode: {normalized_raw_path}")
-
-        # -----------------------------------------------------
-        # Normalize casing and folder names
-        # -----------------------------------------------------
-        rel_path = normalize_path_casing(
-            normalized_raw_path,
+    # ---------------------------------------------------------
+    # Apply edits to TEMP workspace.
+    #
+    # This routes through the same apply_file_edits_for_task() used by
+    # the FixLoop retry path (see validator.py), so "create"/"modify"/
+    # "delete" are handled identically everywhere instead of this
+    # execution path carrying its own separate, less complete copy of
+    # the logic. Notably, the previous inline version here never
+    # looked at "instructions" at all -- a model-issued "delete" would
+    # have silently overwritten the file with (likely empty) content
+    # instead of removing it.
+    #
+    # A ValueError here means the model proposed something Clean
+    # Architecture enforcement rejects (illegal path, new module,
+    # malformed edit, etc). That's a real problem with THIS subtask's
+    # output, but not a reason to crash the whole multi-task run --
+    # everything already committed for earlier subtasks stays intact,
+    # and this subtask is simply treated the same as one that produced
+    # no changes (matching the existing "no file changes" skip-commit
+    # path in main.py). Resuming after a fix (e.g. improving the
+    # prompt) will re-run just this subtask, same as any other
+    # unfinished one.
+    # ---------------------------------------------------------
+    try:
+        changed_files = apply_file_edits_for_task(
+            workspace_path,
+            file_edits,
             repo_type,
-            workspace_root=workspace_path
+            enforcer=enforcer,
         )
-
-        # Second validation: normalized path
-        if repo_type == "backend":
-            if not enforcer.validate_path(rel_path):
-                raise ValueError(
-                    f"Illegal path generated under Clean Architecture rules: {rel_path}"
-                )
-
-        # -----------------------------------------------------
-        # Write file to workspace
-        # -----------------------------------------------------
-        content = edit.get("content", "")
-
-        full_path = workspace_path / rel_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(content, encoding="utf-8")
-
-        changed_files.append({
-            "path": rel_path,
-            "content": content
-        })
+    except ValueError as ex:
+        print(
+            f"--- Subtask '{subtask['title']}' produced an invalid edit and was skipped: {ex} ---"
+        )
+        return []
 
     return changed_files
