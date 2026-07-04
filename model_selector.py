@@ -1,5 +1,5 @@
-from opencode.client import call_opencode, call_opencode_json
-from openai.client import call_openai, call_openai_json
+from opencode_client.client import call_opencode, call_opencode_json
+from openai_client.client import call_openai, call_openai_json
 
 from model_constants import (
     PROVIDER_CLAUDE,

@@ -1,49 +1,60 @@
+import json
+import re
+
 class JsonExtractor:
     """
-    Extracts the FIRST valid top-level JSON array from model output.
-    Handles markdown fences, prose, nested arrays, and noisy output.
+    Robustly extracts the FIRST valid top-level JSON array from model output.
+    Handles:
+      - Markdown fences
+      - Multiple arrays
+      - Leading/trailing prose
+      - Nested arrays
+      - Trailing commas
+      - Windows paths
     """
+
+    ARRAY_REGEX = re.compile(r"\[[\s\S]*?\]")
 
     @staticmethod
     def extract(raw: str) -> str:
-        if not raw:
+        if not raw or not raw.strip():
             raise ValueError("Empty model output")
 
         text = raw.strip()
 
-        # Remove markdown fences (Claude sometimes wraps output)
+        # Remove markdown fences
         if "```" in text:
             parts = text.split("```")
-            for p in parts:
-                if "[" in p and "]" in p:
-                    text = p.strip()
-                    break
+            candidates = [p.strip() for p in parts if "[" in p and "]" in p]
+            if candidates:
+                text = candidates[0]
 
-        # Find first '['
-        start = text.find("[")
-        if start == -1:
+        # Find all bracketed arrays
+        arrays = JsonExtractor.ARRAY_REGEX.findall(text)
+        if not arrays:
             raise ValueError("No JSON array found in output")
 
-        depth = 0
-        end = None
+        # Try each candidate until one parses
+        for arr in arrays:
+            cleaned = JsonExtractor._clean_array(arr)
+            try:
+                json.loads(cleaned)
+                return cleaned
+            except Exception:
+                continue
 
-        for i in range(start, len(text)):
-            ch = text[i]
+        raise ValueError("No valid JSON array found")
 
-            if ch == "[":
-                depth += 1
-            elif ch == "]":
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
+    @staticmethod
+    def _clean_array(arr: str) -> str:
+        """
+        Fix trailing commas and common LLM formatting issues.
+        """
+        # Remove trailing commas before closing bracket
+        arr = re.sub(r",\s*]", "]", arr)
+        arr = re.sub(r",\s*}", "}", arr)
 
-        if end is None:
-            raise ValueError("JSON array not properly closed")
+        # Remove comments
+        arr = re.sub(r"//.*", "", arr)
 
-        cleaned = text[start:end].strip()
-
-        if not cleaned.startswith("[") or not cleaned.endswith("]"):
-            raise ValueError("Extracted content is not a valid JSON array")
-
-        return cleaned
+        return arr.strip()

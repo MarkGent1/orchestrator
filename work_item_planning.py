@@ -42,7 +42,7 @@ Rules:
 - Keep tasks minimal and focused.
 - Return ONLY a JSON array of subtasks:
   [
-    {"title": "...", "description": "..."},
+    {{ "title": "...", "description": "..." }},
     ...
   ]
 """

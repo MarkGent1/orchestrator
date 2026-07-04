@@ -1,61 +1,58 @@
+from anthropic import AsyncAnthropic
+from dotenv import load_dotenv
 import os
 import json
 import asyncio
-from dotenv import load_dotenv
-from openai import AsyncOpenAI
 
-from ..utils.json_extractor import JsonExtractor
-from ..utils.json_sanitizer import JsonSanitizer
-from ..utils.json_validator import JsonValidator
+from utils.json_extractor import JsonExtractor
+from utils.json_sanitizer import JsonSanitizer
+from utils.json_validator import JsonValidator
 
-from model_constants import GPT_MINI
+from model_constants import CLAUDE_HAIKU
 
 load_dotenv()
 
 
-class OpenAIClient:
+class OpenCodeClient:
     """
-    Production‑grade OpenAI → OpenCode integration using the new Responses API.
-    Fully hardened against malformed JSON, markdown wrapping, unescaped quotes,
-    multiline content, and partial truncation.
+    Production‑grade OpenCode → Claude integration.
+    Fully hardened against malformed JSON, markdown wrapping,
+    unescaped quotes, multiline content, and partial truncation.
 
     Model is passed in dynamically.
     """
 
-    def __init__(self, api_key=None, model=GPT_MINI):
-        api_key = api_key or os.getenv("OPENAI_API_KEY")
+    def __init__(self, api_key=None, model=CLAUDE_HAIKU):
+        api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is missing")
+            raise RuntimeError("ANTHROPIC_API_KEY is missing")
 
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.client = AsyncAnthropic(api_key=api_key)
         self.model = model  # Dynamic model selection
 
         self.system_prompt = (
             "You are OpenCode. You ALWAYS return ONLY a JSON array of file edits.\n"
             "Never include explanations, comments, markdown, or text outside the JSON array.\n"
-            "If no edits are needed, return [].\n"
+            "If no edits are needed, return an empty JSON array: [].\n"
             "Each edit must include: \"file\", \"instructions\", and \"content\".\n"
             "Your output must ALWAYS be valid JSON."
         )
 
     # ---------------------------------------------------------
-    # Low-level model call (Responses API)
+    # Low-level model call
     # ---------------------------------------------------------
     async def _call_model(self, system_prompt: str, user_prompt: str) -> str:
-        response = await self.client.responses.create(
+        response = await self.client.messages.create(
             model=self.model,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_output_tokens=4096,
+            max_tokens=4096,
+            cache_control={"type": "ephemeral"},
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
         )
-
-        raw = response.output_text
-        return (raw or "").strip()
+        return (response.content[0].text or "").strip()
 
     # ---------------------------------------------------------
-    # JSON extraction helpers
+    # Generic JSON parsing helpers
     # ---------------------------------------------------------
     def _extract_json_array(self, raw: str) -> list:
         try:
@@ -91,6 +88,13 @@ class OpenAIClient:
         except Exception:
             pass
 
+        try:
+            obj = extract_json_object(raw)
+            obj = obj.lstrip()
+            return json.loads(obj)
+        except Exception:
+            pass
+
         raise RuntimeError("Unable to parse JSON from model output")
 
     # ---------------------------------------------------------
@@ -103,13 +107,13 @@ class OpenAIClient:
             try:
                 raw = await self._call_model(self.system_prompt, prompt)
 
-                print("\n--- RAW OPENAI OUTPUT ---")
+                print("\n--- RAW CLAUDE OUTPUT ---")
                 print(raw)
                 print("--- END RAW OUTPUT ---\n")
 
                 try:
                     edits = json.loads(raw)
-                    JsonValidator.validate(edits)
+                    edits = JsonValidator.validate(edits)
                     return edits
                 except Exception:
                     pass
@@ -133,9 +137,9 @@ class OpenAIClient:
 
                 cleaned = JsonSanitizer.escape_content_strings(cleaned)
                 cleaned = JsonSanitizer.sanitize(cleaned)
-                cleaned = cleaned.lstrip()
 
                 try:
+                    cleaned = cleaned.lstrip()
                     edits = json.loads(cleaned)
                 except Exception:
                     strict_prompt = (
@@ -156,13 +160,13 @@ class OpenAIClient:
                     except Exception:
                         return []
 
-                JsonValidator.validate(edits)
+                edits = JsonValidator.validate(edits)
                 return edits
 
             except Exception as ex:
                 if attempt == max_attempts:
                     raise RuntimeError(
-                        f"OpenAI failed after {max_attempts} attempts: {ex}"
+                        f"OpenCode failed after {max_attempts} attempts: {ex}"
                     )
                 await asyncio.sleep(1.0)
 
@@ -172,16 +176,16 @@ class OpenAIClient:
 # ---------------------------------------------------------
 # Public API: file edits (accepts model)
 # ---------------------------------------------------------
-async def call_openai(prompt: str, model=GPT_MINI):
-    client = OpenAIClient(model=model)
+async def call_opencode(prompt: str, model="claude-haiku-4.5"):
+    client = OpenCodeClient(model=model)
     return await client.generate_file_edits(prompt)
 
 
 # ---------------------------------------------------------
 # Public API: generic JSON (accepts model)
 # ---------------------------------------------------------
-async def call_openai_json(prompt: str, model=GPT_MINI):
-    client = OpenAIClient(model=model)
+async def call_opencode_json(prompt: str, model="claude-haiku-4.5"):
+    client = OpenCodeClient(model=model)
 
     def validate_subtask_shape(value):
         if not isinstance(value, list):
@@ -193,15 +197,14 @@ async def call_openai_json(prompt: str, model=GPT_MINI):
                 raise TypeError(f"Subtask #{i} missing required fields")
 
     async def run(prompt_text: str) -> str:
-        response = await client.client.responses.create(
+        response = await client.client.messages.create(
             model=client.model,
-            input=[
-                {"role": "system", "content": client.system_prompt},
-                {"role": "user", "content": prompt_text},
-            ],
-            max_output_tokens=4096,
+            max_tokens=4096,
+            cache_control={"type": "ephemeral"},
+            system=client.system_prompt,
+            messages=[{"role": "user", "content": prompt_text}],
         )
-        return (response.output_text or "").strip()
+        return (response.content[0].text or "").strip()
 
     raw = await run(prompt)
 
@@ -220,6 +223,33 @@ async def call_openai_json(prompt: str, model=GPT_MINI):
     )
 
     raw = await run(strict_prompt)
+
     value = client._extract_json_value(raw)
     validate_subtask_shape(value)
     return value
+
+
+# ---------------------------------------------------------
+# Object extractor
+# ---------------------------------------------------------
+def extract_json_object(raw: str) -> str:
+    start = raw.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found")
+
+    depth = 0
+    end = None
+
+    for i in range(start, len(raw)):
+        if raw[i] == "{":
+            depth += 1
+        elif raw[i] == "}":
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+
+    if end is None:
+        raise ValueError("JSON object not properly closed")
+
+    return raw[start:end].strip()
