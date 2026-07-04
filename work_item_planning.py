@@ -1,5 +1,5 @@
 from typing import Dict, Any, List
-
+from model_selector import select_model_for_planning, call_model_json
 
 class WorkItemPlanner:
     """
@@ -8,8 +8,9 @@ class WorkItemPlanner:
     the Work Item to Active.
     """
 
-    def __init__(self, ado_mcp_client):
+    def __init__(self, ado_mcp_client, model_config):
         self.ado = ado_mcp_client
+        self.model_config = model_config
 
     # ---------------------------------------------------------
     # Public API
@@ -22,8 +23,40 @@ class WorkItemPlanner:
         acceptance = wi["fields"].get("Microsoft.VSTS.Common.AcceptanceCriteria", "").strip()
 
         quality_issues = self.validate_work_item(title, description, acceptance)
-        plan = self.generate_task_plan(title, description, acceptance)
 
+        # -----------------------------------------------------
+        # AI-Generated Task Plan
+        # -----------------------------------------------------
+        model, provider = select_model_for_planning(self.model_config)
+
+        prompt = f"""
+Generate a minimal, non-overlapping SDLC task plan for this Work Item.
+
+Title: {title}
+Description: {description}
+Acceptance Criteria: {acceptance}
+
+Rules:
+- Only generate tasks required for THIS Work Item.
+- No documentation, ADRs, or unrelated features.
+- Keep tasks minimal and focused.
+- Return ONLY a JSON array of subtasks:
+  [
+    {"title": "...", "description": "..."},
+    ...
+  ]
+"""
+
+        plan_tasks = await call_model_json(prompt, model, provider)
+
+        plan = {
+            "title": title,
+            "tasks": plan_tasks
+        }
+
+        # -----------------------------------------------------
+        # Create child tasks in Azure DevOps
+        # -----------------------------------------------------
         created_tasks: List[Dict[str, Any]] = []
         for task in plan["tasks"]:
             created = await self.ado.create_child_task(
@@ -61,74 +94,10 @@ class WorkItemPlanner:
         if not acceptance:
             issues.append("Acceptance Criteria missing.")
 
-        if "As a" not in description and "I want" not in description:
+        if "As a" not in description and "as a" not in description and "I want" not in description:
             issues.append("User story format missing.")
 
         return issues
-
-    # ---------------------------------------------------------
-    # Task plan generation (non-overlapping)
-    # ---------------------------------------------------------
-    def generate_task_plan(self, title: str, description: str, acceptance: str) -> Dict[str, Any]:
-        text = f"{title} {description} {acceptance}".lower()
-
-        is_frontend = any(word in text for word in [
-            "reactjs", "nextjs", "frontend"
-        ])
-
-        if is_frontend:
-            tasks = [
-                {
-                    "title": "Implement frontend changes",
-                    "description": (
-                        "Implement only the frontend code required for this Work Item. "
-                        "Focus strictly on components, forms, validation, and API calls. "
-                        "Do not generate documentation or unrelated features."
-                    ),
-                },
-                {
-                    "title": "Write automated tests",
-                    "description": (
-                        "Write only the tests required for the new frontend code. "
-                        "Use minimal, focused test cases."
-                    ),
-                },
-                {
-                    "title": "Refactor and finalise",
-                    "description": (
-                        "Perform minimal cleanup and ensure the frontend build and tests pass."
-                    ),
-                },
-            ]
-        else:
-            tasks = [
-                {
-                    "title": "Implement backend changes",
-                    "description": (
-                        "Implement only the backend code required for this Work Item. "
-                        "Focus strictly on controllers, services, models, and logic. "
-                        "Do not generate documentation, ADRs, or unrelated features."
-                    ),
-                },
-                {
-                    "title": "Write automated tests",
-                    "description": (
-                        "Write only the tests required for the new backend code. "
-                        "Keep tests minimal and focused."
-                    ),
-                },
-                {
-                    "title": "Refactor and finalise",
-                    "description": (
-                        "Perform minimal cleanup and ensure the backend build and tests pass."
-                    ),
-                },
-            ]
-
-        return {
-            "title": title,
-            "tasks": tasks,
-        }
 
     # ---------------------------------------------------------
     # Comment rendering

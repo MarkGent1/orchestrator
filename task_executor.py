@@ -1,5 +1,5 @@
 from prompt_builder import build_opencode_prompt_for_task
-from opencode.client import call_opencode
+from model_selector import select_model_for_task_execution, call_model
 from utils.path_normalization import normalize_path_casing
 from architecture.enforcement import CleanArchitectureEnforcer
 from utils.path_unifier import unify_path
@@ -13,7 +13,8 @@ async def execute_subtask(
     task,
     subtask,
     repo_type: str,
-    enforcer: CleanArchitectureEnforcer
+    enforcer: CleanArchitectureEnforcer,
+    model_config: object
 ):
     print("DEBUG: prompt_builder repo_path =", workspace_path)
     print("DEBUG: exists =", workspace_path.exists())
@@ -32,9 +33,18 @@ async def execute_subtask(
     )
 
     # ---------------------------------------------------------
-    # Call OpenCode to get file edits
+    # ⭐ Select model dynamically (Claude or OpenAI)
     # ---------------------------------------------------------
-    file_edits = await call_opencode(prompt)
+    model, provider = select_model_for_task_execution(
+        subtask["title"],
+        repo_type,
+        model_config
+    )
+
+    # ---------------------------------------------------------
+    # ⭐ Call selected model (Claude or OpenAI)
+    # ---------------------------------------------------------
+    file_edits = await call_model(prompt, model, provider)
     changed_files = []
 
     # ---------------------------------------------------------
@@ -59,7 +69,7 @@ async def execute_subtask(
 
         # First validation: raw path
         if not enforcer.validate_path(normalized_raw_path):
-            raise ValueError(f"Illegal raw path from OpenCode: {normalized_raw_path}")
+            raise ValueError(f"Illegal raw path from model: {normalized_raw_path}")
 
         # -----------------------------------------------------
         # Normalize casing and folder names

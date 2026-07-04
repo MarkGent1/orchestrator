@@ -21,12 +21,22 @@ class BuildTestValidator:
         max_fix_attempts: int = 3,
         repo_type: str = None,
         enforcer: CleanArchitectureEnforcer = None,
+        model_config: object = None
     ):
         self.repo_path = repo_path
         self.temp_workspace = temp_workspace
         self.repo_type = repo_type
         self.max_fix_attempts = max_fix_attempts
-        self.fix_loop = FixLoop(self.temp_workspace, max_fix_attempts, self.repo_type, enforcer)
+        self.model_config = model_config
+
+        # Pass model_config into FixLoop
+        self.fix_loop = FixLoop(
+            self.temp_workspace,
+            max_fix_attempts,
+            self.repo_type,
+            enforcer,
+            model_config=self.model_config
+        )
 
     async def run_validation(self):
         if self.repo_type == "backend":
@@ -59,6 +69,7 @@ class BuildTestValidator:
         for attempt in range(1, self.max_fix_attempts + 1):
             print(f"\n=== Fix attempt {attempt} for {phase_name} errors ===")
 
+            # FixLoop now uses dynamic model selection
             fixes = await self.fix_loop.attempt_fix(error_output)
 
             if not fixes:

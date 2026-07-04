@@ -8,6 +8,8 @@ from ..utils.json_extractor import JsonExtractor
 from ..utils.json_sanitizer import JsonSanitizer
 from ..utils.json_validator import JsonValidator
 
+from model_constants import GPT_MINI
+
 load_dotenv()
 
 
@@ -16,15 +18,17 @@ class OpenAIClient:
     Production‑grade OpenAI → OpenCode integration using the new Responses API.
     Fully hardened against malformed JSON, markdown wrapping, unescaped quotes,
     multiline content, and partial truncation.
+
+    Model is passed in dynamically.
     """
 
-    def __init__(self, api_key=None, model="gpt-5.4-mini"):
+    def __init__(self, api_key=None, model=GPT_MINI):
         api_key = api_key or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is missing")
 
         self.client = AsyncOpenAI(api_key=api_key)
-        self.model = model
+        self.model = model  # Dynamic model selection
 
         self.system_prompt = (
             "You are OpenCode. You ALWAYS return ONLY a JSON array of file edits.\n"
@@ -51,7 +55,7 @@ class OpenAIClient:
         return (raw or "").strip()
 
     # ---------------------------------------------------------
-    # JSON extraction helpers (same as Claude client)
+    # JSON extraction helpers
     # ---------------------------------------------------------
     def _extract_json_array(self, raw: str) -> list:
         try:
@@ -166,17 +170,17 @@ class OpenAIClient:
 
 
 # ---------------------------------------------------------
-# Public API: file edits
+# Public API: file edits (accepts model)
 # ---------------------------------------------------------
-async def call_openai(prompt: str, model="gpt-5.4-mini"):
+async def call_openai(prompt: str, model=GPT_MINI):
     client = OpenAIClient(model=model)
     return await client.generate_file_edits(prompt)
 
 
 # ---------------------------------------------------------
-# Public API: generic JSON (task decomposition)
+# Public API: generic JSON (accepts model)
 # ---------------------------------------------------------
-async def call_openai_json(prompt: str, model="gpt-5.4-mini"):
+async def call_openai_json(prompt: str, model=GPT_MINI):
     client = OpenAIClient(model=model)
 
     def validate_subtask_shape(value):

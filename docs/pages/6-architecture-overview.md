@@ -2,43 +2,70 @@
 
 The orchestrator is built as a **modular, deterministic, repo‑agnostic SDLC engine**. It combines:
 
-*   Azure DevOps MCP    
-*   GitHub MCP    
-*   OpenCode (Claude)    
-*   Clean Architecture enforcement    
-*   A temp‑workspace execution model    
-*   A self‑healing FixLoop    
+*   Azure DevOps MCP
+*   GitHub MCP
+*   Multi‑model AI (Claude + OpenAI)
+*   Clean Architecture enforcement  
+*   A temp‑workspace execution model
+*   A self‑healing FixLoop
 *   A multi‑phase SDLC pipeline
     
 This page describes the full architecture.
 
-## 5.1 High‑Level Architecture Diagram
+## 5.1 Multi‑Agent SDLC Flow (Claude + OpenAI)
 
-                       ┌──────────────────────────┐
-                       │        User CLI          │
-                       │  python main.py <id>     │
-                       └─────────────┬────────────┘
-                                     │
-                                     ▼
-                        ┌────────────────────────┐
-                        │     Orchestrator       │
-                        │        main.py         │
-                        └─────────────┬──────────┘
-                                      │
-         ┌────────────────────────────┼────────────────────────────┐
-         ▼                            ▼                            ▼
-    ┌──────────────┐        ┌────────────────┐          ┌──────────────────┐
-    │ Module 1     │        │ Module 2       │          │ Module 3          │
-    │ Work Item    │        │ AI Dev Loop    │          │ Build/Test/Fix    │
-    │ Planning     │        │ Branch + PR    │          │ Validator + FixLoop│
-    └──────┬───────┘        └──────┬─────────┘          └──────────┬────────┘
-           │                        │                                │
-           ▼                        ▼                                ▼
-    ┌──────────────┐        ┌────────────────┐          ┌──────────────────┐
-    │ ADO MCP      │        │ OpenCode (AI)  │          │ .NET / Node tools │
-    │ GitHub MCP   │        │ Repo‑aware     │          │ dotnet / npm      │
-    └──────────────┘        └────────────────┘          └──────────────────┘
-    
+```
+User CLI
+  python main.py <work_item_id>
+        |
+        v
+Orchestrator (main.py)
+        |
+        v
++---------------------------+
+|  Planning Agent           |
+|  Model: Claude Sonnet     |
+|  File: work_item_planning |
++---------------------------+
+        |
+        v
++---------------------------+
+|  Decomposition Agent      |
+|  Model: GPT‑5.4‑mini      |
+|  File: task_decomposer    |
++---------------------------+
+        |
+        v
++---------------------------+
+|  Execution Agent          |
+|  Model: Claude Haiku      |
+|  File: task_executor      |
++---------------------------+
+        |
+        v
++---------------------------+
+|  Build/Test Validator     |
+|  Tools: dotnet / npm      |
+|  File: validator          |
++---------------------------+
+        |
+   if failure
+        v
++---------------------------+
+|  FixLoop Agent            |
+|  Model: Claude Haiku      |
+|  File: fix_loop           |
++---------------------------+
+        |
+        v
++---------------------------+
+|  Git + PR Automation      |
+|  GitHub MCP / GitWorkflow |
++---------------------------+
+        |
+        v
+ADO Work Item linked to PR
+```
 
 ## 5.2 Module Overview
 
@@ -51,11 +78,11 @@ This page describes the full architecture.
 *   Adds comments    
 *   Updates Work Item state    
 
-### Module 2 — AI Developer Loop
+### Module 2 — AI Developer Loop (GPT‑mini + Claude Haiku)
 
 *   Creates feature branch    
-*   Decomposes tasks    
-*   Generates code via OpenCode    
+*   Decomposes tasks (default: GPT‑mini)
+*   Generates code edits (default: Claude Haiku)
 *   Applies edits safely    
 *   Commits per subtask    
 *   Enhances PR    
@@ -164,6 +191,10 @@ This prevents AI from “inventing” architecture.
 ```
 Work Item → Plan → Tasks → Branch → Sub‑Tasks → Edits → Commit → Build → Test → FixLoop → Push → PR → Link → Done
 ```
+
+## 5.8 Multi‑Agent SDLC Sequence Diagram
+
+![5.8.png](../images/5.8.png)
 
 [<< Overview](../../README.md)
  | 

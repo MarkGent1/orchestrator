@@ -116,20 +116,20 @@ Each file has a **single responsibility**.
 # 3.8. Auto‑Fix Loop (FixLoop)
 
 When a phase fails:
-1.  Capture error output    
-2.  Build a FixLoop prompt    
-3.  Send to OpenCode    
-4.  Receive JSON file edits    
-5.  Validate edits with Clean Architecture rules    
-6.  Apply edits safely    
-7.  Re‑run the failing phase    
+1.  Capture error output
+2.  Build a FixLoop prompt
+3.  Send to the **FixLoop Model (default: Claude Haiku)**
+4.  Receive JSON file edits
+5.  Validate edits with Clean Architecture rules
+6.  Apply edits safely
+7.  Re‑run the failing phase
 8.  Repeat until fixed or attempts exhausted
     
 If all attempts fail → **no PR is created**.
 
 # 3.9. FixLoop Prompt (Smart, Repo‑Aware)
 
-FixLoop instructs OpenCode to:
+FixLoop instructs the model to:
 *   Fix .NET build errors    
 *   Fix .NET test failures    
 *   Fix missing namespaces    

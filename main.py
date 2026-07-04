@@ -1,5 +1,6 @@
+import argparse
 import asyncio
-import sys
+import yaml
 import os
 import subprocess
 import shutil
@@ -22,16 +23,75 @@ from utils.repo_scanner import build_module_map
 from utils.tree_visualiser import print_tree
 from architecture.enforcement import CleanArchitectureEnforcer
 
+from model_constants import (
+    DEFAULT_PLANNING_MODEL,
+    DEFAULT_DECOMPOSITION_MODEL,
+    DEFAULT_EXECUTION_MODEL,
+    DEFAULT_FIXLOOP_MODEL,
+)
+
+# -------------------------------------------------------------
+# python main.py 400 --repo D:\git\mav\mav-user-api-sdlc-poc
+#   --planning-model gpt-5.4-mini
+#   --fixloop-model gpt-5.4-mini
+#   --decomposition-model gpt-5.4-mini
+#   --execution-model gpt-5.4-mini
+# -------------------------------------------------------------
 
 async def main():
     # ---------------------------------------------------------
     # CLI validation
     # ---------------------------------------------------------
-    if len(sys.argv) != 4 or sys.argv[2] != "--repo":
-        raise ValueError("Usage: python main.py <work_item_id> --repo <repo_path>")
+    parser = argparse.ArgumentParser()
 
-    work_item_id = int(sys.argv[1])
-    repo_path = Path(sys.argv[3]).resolve()
+    parser.add_argument("work_item_id", type=int)
+    parser.add_argument("--repo", required=True)
+
+    parser.add_argument("--planning-model", default=DEFAULT_PLANNING_MODEL)
+    parser.add_argument("--fixloop-model", default=DEFAULT_FIXLOOP_MODEL)
+    parser.add_argument("--decomposition-model", default=DEFAULT_DECOMPOSITION_MODEL)
+    parser.add_argument("--execution-model", default=DEFAULT_EXECUTION_MODEL)
+
+    args = parser.parse_args()
+
+    work_item_id = args.work_item_id
+    repo_path = Path(args.repo).resolve()
+
+    # ---------------------------------------------------------
+    # Load default model config from models.yaml
+    # ---------------------------------------------------------
+    models_yaml_path = Path(__file__).parent / "models.yaml"
+
+    if models_yaml_path.exists():
+        with open(models_yaml_path, "r", encoding="utf-8") as f:
+            default_model_config = yaml.safe_load(f)
+    else:
+        default_model_config = {
+            "planning_model": DEFAULT_PLANNING_MODEL,
+            "decomposition_model": DEFAULT_DECOMPOSITION_MODEL,
+            "execution_model": DEFAULT_EXECUTION_MODEL,
+            "fixloop_model": DEFAULT_FIXLOOP_MODEL,
+        }
+
+    # ---------------------------------------------------------
+    # CLI overrides YAML defaults
+    # ---------------------------------------------------------
+    model_config = {
+        "planning_model": args.planning_model or default_model_config.get("planning_model", DEFAULT_PLANNING_MODEL),
+        "fixloop_model": args.fixloop_model or default_model_config.get("fixloop_model", DEFAULT_FIXLOOP_MODEL),
+        "decomposition_model": args.decomposition_model or default_model_config.get("decomposition_model", DEFAULT_DECOMPOSITION_MODEL),
+        "execution_model": args.execution_model or default_model_config.get("execution_model", DEFAULT_EXECUTION_MODEL),
+    }
+
+    # ---------------------------------------------------------
+    # Startup Banner: Show Selected Models
+    # ---------------------------------------------------------
+    print("\n==================== ORCHESTRATOR MODEL CONFIG ====================")
+    print(f"Planning Model:      {model_config['planning_model']}")
+    print(f"Decomposition Model: {model_config['decomposition_model']}")
+    print(f"Execution Model:     {model_config['execution_model']}")
+    print(f"FixLoop Model:       {model_config['fixloop_model']}")
+    print("====================================================================\n")
 
     # ---------------------------------------------------------
     # MCP server paths
@@ -45,7 +105,7 @@ async def main():
     # ---------------------------------------------------------
     temp_workspace = repo_path / ".orchestrator-tmp"
     if temp_workspace.exists():
-        shutil.rmtree(temp_workspace)
+        shutil.rmtree(temp_workspace, ignore_errors=True)
     temp_workspace.mkdir(parents=True, exist_ok=True)
 
     # ---------------------------------------------------------
@@ -94,7 +154,7 @@ async def main():
     # ---------------------------------------------------------
     ado = AdoMcpClient(ado_server_path)
     github = GithubMcpClient(github_server_path)
-    planner = WorkItemPlanner(ado)
+    planner = WorkItemPlanner(ado, model_config)
 
     # GitWorkflow MUST operate on the real repo, not temp workspace
     gitflow = GitWorkflow(repo_path, github, repo_type)
@@ -187,7 +247,12 @@ async def main():
     for idx, task in enumerate(tasks, start=1):
         print(f"\n=== Task {idx}/{len(tasks)}: {task['title']} ===")
 
-        subtasks = await decompose_task(work_item_id, plan["title"], task, repo_type)
+        subtasks = await decompose_task(
+            work_item_id,
+            plan["title"],
+            task,
+            repo_type,
+            model_config)
 
         for sub in subtasks:
             print(f"--- Subtask: {sub['title']} ---")
@@ -201,6 +266,7 @@ async def main():
                 sub,
                 repo_type,
                 enforcer,
+                model_config
             )
 
             await gitflow.commit_task_changes(
@@ -220,7 +286,8 @@ async def main():
         temp_workspace=temp_workspace,
         max_fix_attempts=3,
         repo_type=repo_type,
-        enforcer=enforcer
+        enforcer=enforcer,
+        model_config=model_config
     )
 
     ok, message = await validator.run_validation()

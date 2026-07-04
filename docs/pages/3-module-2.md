@@ -7,17 +7,18 @@ Module 2 extends the orchestrator beyond planning. It now:
 *   Reads a Work Item    
 *   Generates a task plan    
 *   Creates a feature branch    
-*   Iterates through each task    
-*   Calls OpenCode (Claude) to generate file edits    
+*   Iterates through each task
+*   Decomposes tasks using **GPT‑5.4‑mini** (default)
+*   Executes subtasks using the **Execution Model (default: Claude Haiku)** 
 *   Applies edits safely    
 *   Commits each task atomically    
 *   Pushes the branch    
 *   Opens a PR    
 *   Links the PR to the Work Item
     
-This is the **AI developer loop**.
+This is the orchestrator’s **AI developer loop**, powered by multiple specialised AI agents.
 
-# 2.2. Orchestrator Structure (Updated)
+# 2.2. Orchestrator Structure
 
 ```
 orchestrator/
@@ -26,27 +27,54 @@ orchestrator/
   fix_loop.py
   validator.py
   file_editing.py
+  model_selector.py
+  model_constants.py
   git_workflow.py
   github_mcp_client.py
   ado_mcp_client.py
-  backend_build.py
-  backend_test.py
-  frontend_build.py
-  frontend_test.py
-  frontend_lint.py
-  frontend_format.py
+```
+
+AI Developer Loop:
+
+```
   task_decomposer.py
   task_executor.py
   task_memory.py
   pr_enhancer.py
+```
+
+Backend:
+
+```
+  backend_build.py
+  backend_test.py
+```
+
+Frontend:
+
+```
+  frontend_build.py
+  frontend_test.py
+  frontend_lint.py
+  frontend_format.py
+```
+
+Architecture Enforcement:
+
+```  
   architecture/
     enforcement.py
+```
+
+Utilities:
+
+```
   utils/
     path_normalization.py
     repo_scanner.py
     tree_visualiser.py
     copy_repo.py
-``` 
+```
 
 ### ✔ `fix_loop.py`
 
@@ -105,22 +133,22 @@ Via ADO MCP.
 
 ### 3. Generate Plan
 
-Module 1.
+Module 1 (default: Claude Sonnet).
 
 ### 4. Create Feature Branch
 
 `feature/<id>-<slug>`
 
-### 5. Task Loop
+### 5. Task Loop (Multi‑Model)
 
 For each task:
-1.  Decompose into subtasks    
+1.  **Decompose into subtasks (default: GPT‑mini)**
 2.  Build repo‑aware prompt    
-3.  Call OpenCode    
+3.  **Execute subtasks (default: Claude Haiku)**
 4.  Apply edits safely    
 5.  Commit    
 6.  Run build + tests    
-7.  FixLoop if needed    
+7.  FixLoop if needed (default: Claude Haiku)
 
 ### 6. Push Branch
 
@@ -144,6 +172,7 @@ The orchestrator now:
 *   Avoids destructive rewrites    
 *   Generates atomic commits    
 *   Produces reproducible changes
+*   Uses **multiple AI agents** for different phases
     
 This is now **production‑grade AI development**.
 

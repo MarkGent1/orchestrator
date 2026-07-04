@@ -36,13 +36,13 @@ The orchestrator now:
 *   Creates a feature branch    
 *   Copies the repo into a **temp workspace**    
 *   Detects repo type (backend/frontend)    
-*   Decomposes tasks into subtasks    
+*   **Decomposes tasks using GPT‑5.4‑mini** (default)
 *   Builds repo‑aware prompts    
-*   Calls OpenCode (Claude) for file edits    
+*   **Executes subtasks using Claude Haiku** (default)
 *   Applies edits safely (no corruption, no hallucinated folders)    
 *   Commits each subtask atomically    
 *   Runs build + tests    
-*   Auto‑fixes failures via FixLoop    
+*   Auto‑fixes failures via **FixLoop (Claude Haiku)** (default)
 *   Pushes the branch    
 *   Opens a PR    
 *   Enhances the PR description    
@@ -66,19 +66,20 @@ When all modules are connected:
 
 1.  You say: **“Implement feature X”**    
 2.  Orchestrator does:
-    *   Read Work Item        
-    *   Validate acceptance criteria        
-    *   Generate plan        
-    *   Create tasks        
-    *   Create branch        
-    *   Modify files        
-    *   Commit        
-    *   Push        
-    *   PR        
-    *   Link PR        
-    *   Update Work Item        
-    *   Deploy        
-    *   Tear down        
+    *   Read Work Item
+    *   Validate acceptance criteria
+    *   Generate plan (default: Claude Sonnet)
+    *   Create tasks
+    *   Create branch
+    *   Decompose tasks (default: GPT‑mini)
+    *   Modify files (default: Claude Haiku)
+    *   Commit
+    *   Push
+    *   PR
+    *   Link PR
+    *   Update Work Item
+    *   Deploy
+    *   Tear down
     *   Close Work Item
         
 This is the **autonomous SDLC engine**.

@@ -187,3 +187,5 @@ Your orchestrator can now support **any number of repos** with consistent, safe 
 [<< Overview](../../README.md)
  | 
 [<< How to Extend the Orchestrator](./11-extend-the-orchestrator.md)
+ | 
+[Model Capabilities >>](./13-model-capabilities.md)

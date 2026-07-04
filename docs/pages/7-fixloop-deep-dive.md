@@ -17,7 +17,7 @@ FixLoop ensures:
     1. Phase fails (build/test/lint/format)
     2. Validator captures error output
     3. FixLoop builds a repair prompt
-    4. OpenCode returns JSON file edits
+    4. Claude Haiku (default) returns JSON file edits
     5. Edits validated by Clean Architecture rules
     6. Edits applied safely in temp workspace
     7. Phase re‑runs

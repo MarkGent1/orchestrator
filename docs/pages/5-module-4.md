@@ -17,7 +17,7 @@ This is the orchestrator’s **inner loop brain**.
 
 # 4.2 Task Decomposition
 
-`task_decomposer.py` uses Claude to break a task into sub‑tasks:
+`task_decomposer.py` uses **GPT‑5.4‑mini** (default) to break a task into sub‑tasks:
 
     [
       { "title": "Add DTO", "description": "..." },
@@ -35,7 +35,7 @@ Benefits:
 
 `task_executor.py` handles:
 *   Building prompts    
-*   Calling OpenCode    
+*   Calling the Execution Model (default: Claude Haiku)
 *   Applying edits    
 *   Committing    
 *   Retrying    
