@@ -10,7 +10,6 @@ from frontend_format import run_frontend_format
 
 from fix_loop import FixLoop
 from file_editing import apply_file_edits_for_task
-from utils.path_normalization import normalize_path_casing
 from architecture.enforcement import CleanArchitectureEnforcer
 
 class BuildTestValidator:
@@ -28,6 +27,7 @@ class BuildTestValidator:
         self.repo_type = repo_type
         self.max_fix_attempts = max_fix_attempts
         self.model_config = model_config
+        self.enforcer = enforcer
 
         # Pass model_config into FixLoop
         self.fix_loop = FixLoop(
@@ -50,6 +50,21 @@ class BuildTestValidator:
                 ("test", run_frontend_tests),
                 ("lint", run_frontend_lint),
                 ("format", run_frontend_format),
+            ]
+        elif self.repo_type == "fullstack":
+            # Run both sets of phases. repo_type.py can detect a
+            # monorepo containing both a .NET backend and a Node
+            # frontend, but this branch didn't exist before -- any
+            # fullstack repo would always hit the "Unknown repo type"
+            # case below and fail validation outright, no matter how
+            # clean the actual build was.
+            phases = [
+                ("backend build", run_backend_build),
+                ("backend test", run_backend_tests),
+                ("frontend build", run_frontend_build),
+                ("frontend test", run_frontend_tests),
+                ("frontend lint", run_frontend_lint),
+                ("frontend format", run_frontend_format),
             ]
         else:
             return False, f"Unknown repo type: {self.repo_type}"
@@ -75,27 +90,22 @@ class BuildTestValidator:
             if not fixes:
                 return False, f"No fix possible for {phase_name} errors"
 
-            for fix in fixes:
-                file_path = (
-                    fix.get("file")
-                    or fix.get("path")
-                    or fix.get("file_path")
-                    or fix.get("new_file")
-                    or fix.get("filename")
-                )
-
-                if not file_path:
-                    raise ValueError(f"FixLoop returned an edit without a file path: {fix}")
-
-                normalized = normalize_path_casing(
-                    file_path,
-                    self.repo_type,
-                    workspace_root=self.temp_workspace,
-                )
-
-                fix["path"] = normalized
-
-            apply_file_edits_for_task(self.temp_workspace, fixes, self.repo_type)
+            # apply_file_edits_for_task() already resolves the path
+            # field (file/path/file_path/new_file/filename), unifies
+            # it, and applies casing normalization -- doing that again
+            # here first and handing it an already-normalized "path"
+            # would run normalize_path_casing() twice on the same
+            # value. For brand-new multi-segment folder names that is
+            # not a no-op (str.capitalize() lowercases the rest of an
+            # already-PascalCased name on the second pass), so this
+            # previously risked mangling freshly-created folder names
+            # in the fix-loop path specifically.
+            apply_file_edits_for_task(
+                self.temp_workspace,
+                fixes,
+                self.repo_type,
+                enforcer=self.enforcer,
+            )
 
             ok, output = runner(self.temp_workspace)
             print(f"\n=== {phase_name.upper()} OUTPUT (after fix) ===\n{output}\n")

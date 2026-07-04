@@ -1,8 +1,7 @@
 from prompt_builder import build_opencode_prompt_for_task
 from model_selector import select_model_for_task_execution, call_model
-from utils.path_normalization import normalize_path_casing
 from architecture.enforcement import CleanArchitectureEnforcer
-from utils.path_unifier import unify_path
+from file_editing import apply_file_edits_for_task
 
 
 async def execute_subtask(
@@ -45,60 +44,24 @@ async def execute_subtask(
     # ⭐ Call selected model (Claude or OpenAI)
     # ---------------------------------------------------------
     file_edits = await call_model(prompt, model, provider)
-    changed_files = []
 
     # ---------------------------------------------------------
-    # Apply edits to TEMP workspace
+    # Apply edits to TEMP workspace.
+    #
+    # This routes through the same apply_file_edits_for_task() used by
+    # the FixLoop retry path (see validator.py), so "create"/"modify"/
+    # "delete" are handled identically everywhere instead of this
+    # execution path carrying its own separate, less complete copy of
+    # the logic. Notably, the previous inline version here never
+    # looked at "instructions" at all -- a model-issued "delete" would
+    # have silently overwritten the file with (likely empty) content
+    # instead of removing it.
     # ---------------------------------------------------------
-    for edit in file_edits:
-        path = (
-            edit.get("path")
-            or edit.get("file")
-            or edit.get("file_path")
-            or edit.get("new_file")
-            or edit.get("filename")
-        )
-
-        if not path:
-            raise ValueError(f"OpenCode edit has no path-like field: {edit}")
-
-        # -----------------------------------------------------
-        # NORMALISE RAW PATH BEFORE ANY VALIDATION
-        # -----------------------------------------------------
-        normalized_raw_path = unify_path(path)
-
-        # First validation: raw path
-        if not enforcer.validate_path(normalized_raw_path):
-            raise ValueError(f"Illegal raw path from model: {normalized_raw_path}")
-
-        # -----------------------------------------------------
-        # Normalize casing and folder names
-        # -----------------------------------------------------
-        rel_path = normalize_path_casing(
-            normalized_raw_path,
-            repo_type,
-            workspace_root=workspace_path
-        )
-
-        # Second validation: normalized path
-        if repo_type == "backend":
-            if not enforcer.validate_path(rel_path):
-                raise ValueError(
-                    f"Illegal path generated under Clean Architecture rules: {rel_path}"
-                )
-
-        # -----------------------------------------------------
-        # Write file to workspace
-        # -----------------------------------------------------
-        content = edit.get("content", "")
-
-        full_path = workspace_path / rel_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
-        full_path.write_text(content, encoding="utf-8")
-
-        changed_files.append({
-            "path": rel_path,
-            "content": content
-        })
+    changed_files = apply_file_edits_for_task(
+        workspace_path,
+        file_edits,
+        repo_type,
+        enforcer=enforcer,
+    )
 
     return changed_files

@@ -49,6 +49,17 @@ Rules:
 
         plan_tasks = await call_model_json(prompt, model, provider)
 
+        # Match the same defensive guard used in task_decomposer.py:
+        # if the model returns something other than a JSON array (e.g.
+        # a dict, or malformed output that slipped past the JSON
+        # pipeline), fail with a clear, actionable error here instead
+        # of letting `task["title"]` below raise a confusing KeyError/
+        # TypeError several lines later.
+        if not isinstance(plan_tasks, list):
+            raise ValueError(
+                f"Expected a JSON array of tasks from the planning model, got: {type(plan_tasks)}"
+            )
+
         plan = {
             "title": title,
             "tasks": plan_tasks

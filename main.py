@@ -47,10 +47,16 @@ async def main():
     parser.add_argument("work_item_id", type=int)
     parser.add_argument("--repo", required=True)
 
-    parser.add_argument("--planning-model", default=DEFAULT_PLANNING_MODEL)
-    parser.add_argument("--fixloop-model", default=DEFAULT_FIXLOOP_MODEL)
-    parser.add_argument("--decomposition-model", default=DEFAULT_DECOMPOSITION_MODEL)
-    parser.add_argument("--execution-model", default=DEFAULT_EXECUTION_MODEL)
+    # NOTE: these default to None (not the hardcoded model constants) so
+    # the fallback chain below can tell "not passed on the CLI" apart
+    # from "explicitly passed". If these defaulted to the model
+    # constants directly, `args.planning_model` etc. would always be
+    # truthy and the values loaded from models.yaml a few lines down
+    # would silently never be used.
+    parser.add_argument("--planning-model", default=None)
+    parser.add_argument("--fixloop-model", default=None)
+    parser.add_argument("--decomposition-model", default=None)
+    parser.add_argument("--execution-model", default=None)
 
     args = parser.parse_args()
 
@@ -74,7 +80,7 @@ async def main():
         }
 
     # ---------------------------------------------------------
-    # CLI overrides YAML defaults
+    # CLI overrides YAML defaults, which override hardcoded defaults
     # ---------------------------------------------------------
     model_config = {
         "planning_model": args.planning_model or default_model_config.get("planning_model", DEFAULT_PLANNING_MODEL),
@@ -151,189 +157,214 @@ async def main():
 
     # ---------------------------------------------------------
     # Clients
+    #
+    # Both clients spawn a long-lived Node child process. Everything
+    # from here on is wrapped in try/finally so those processes are
+    # always terminated on the way out -- including when a task
+    # raises partway through the run. Without this, every run (and
+    # especially every crash/retry during development) leaks a node
+    # process that keeps running in the background indefinitely.
     # ---------------------------------------------------------
     ado = AdoMcpClient(ado_server_path)
     github = GithubMcpClient(github_server_path)
-    planner = WorkItemPlanner(ado, model_config)
 
-    # GitWorkflow MUST operate on the real repo, not temp workspace
-    gitflow = GitWorkflow(repo_path, github, repo_type)
+    try:
+        planner = WorkItemPlanner(ado, model_config)
 
-    # ---------------------------------------------------------
-    # TEST MODE: COMMIT ALL CHANGES
-    # ---------------------------------------------------------
-    if os.environ.get("GITHUB_TEST_ONLY") == "1":
-        print("Running in --commit-all GitHub test mode")
+        # GitWorkflow MUST operate on the real repo, not temp workspace
+        gitflow = GitWorkflow(repo_path, github, repo_type)
 
-        branch_name = f"feature/github-test-{work_item_id}"
+        # ---------------------------------------------------------
+        # TEST MODE: COMMIT ALL CHANGES
+        # ---------------------------------------------------------
+        if os.environ.get("GITHUB_TEST_ONLY") == "1":
+            print("Running in --commit-all GitHub test mode")
 
-        def git_list(cmd):
-            result = subprocess.run(
-                cmd,
-                cwd=repo_path,
-                capture_output=True,
-                text=True
-            )
-            return [p.strip() for p in result.stdout.splitlines() if p.strip()]
+            branch_name = f"feature/github-test-{work_item_id}"
 
-        modified = git_list(["git", "diff", "--name-only"])
-        staged = git_list(["git", "diff", "--cached", "--name-only"])
-        untracked = git_list(["git", "ls-files", "--others", "--exclude-standard"])
-        deleted = git_list(["git", "ls-files", "--deleted"])
+            def git_list(cmd):
+                result = subprocess.run(
+                    cmd,
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True
+                )
+                return [p.strip() for p in result.stdout.splitlines() if p.strip()]
 
-        all_paths = set(modified + staged + untracked + deleted)
+            modified = git_list(["git", "diff", "--name-only"])
+            staged = git_list(["git", "diff", "--cached", "--name-only"])
+            untracked = git_list(["git", "ls-files", "--others", "--exclude-standard"])
+            deleted = git_list(["git", "ls-files", "--deleted"])
 
-        if not all_paths:
-            raise RuntimeError("No changed files detected for --commit-all mode")
+            all_paths = set(modified + staged + untracked + deleted)
 
-        changed_files = []
-        for p in all_paths:
-            full = repo_path / p
+            if not all_paths:
+                raise RuntimeError("No changed files detected for --commit-all mode")
 
-            if p in deleted:
-                changed_files.append({"path": p, "content": None})
-                continue
+            changed_files = []
+            for p in all_paths:
+                full = repo_path / p
 
-            content = full.read_text()
-            changed_files.append({"path": p, "content": content})
+                if p in deleted:
+                    changed_files.append({"path": p, "content": None})
+                    continue
 
-        print(f"Creating branch: {branch_name}")
-        await gitflow.create_branch(branch_name)
+                content = full.read_text()
+                changed_files.append({"path": p, "content": content})
 
-        print("Committing ALL detected file changes")
-        await gitflow.commit_task_changes(
-            branch_name=branch_name,
-            work_item_id=work_item_id,
-            task={"title": "Commit All"},
-            changed_files=changed_files,
-        )
+            print(f"Creating branch: {branch_name}")
+            await gitflow.create_branch(branch_name)
 
-        print("Pushing branch")
-        await gitflow.push_branch(branch_name)
-
-        print("Opening PR")
-        pr_url = await gitflow.open_pull_request(
-            branch_name,
-            f"GitHub Commit-All Test {work_item_id}",
-            "This PR was created using --commit-all mode."
-        )
-
-        print("PR created:", pr_url)
-        return
-
-    # ---------------------------------------------------------
-    # 1. Fetch Work Item + Plan
-    # ---------------------------------------------------------
-    plan_result = await planner.plan_work_item(work_item_id=work_item_id)
-    plan = plan_result["plan"]
-    plan["id"] = work_item_id
-    tasks = plan["tasks"]
-
-    print(f"\nFetched Work Item {work_item_id}: {plan['title']}")
-    print(f"Tasks: {[t['title'] for t in tasks]}")
-
-    # ---------------------------------------------------------
-    # 2. Create feature branch
-    # ---------------------------------------------------------
-    branch_name = gitflow.make_branch_name(work_item_id, plan["title"])
-    print(f"\nCreating branch: {branch_name}")
-    await gitflow.create_branch(branch_name)
-
-    # ---------------------------------------------------------
-    # 3. Task loop → decomposition → subtasks → commit
-    # ---------------------------------------------------------
-    task_memory = TaskMemory()
-
-    for idx, task in enumerate(tasks, start=1):
-        print(f"\n=== Task {idx}/{len(tasks)}: {task['title']} ===")
-
-        subtasks = await decompose_task(
-            work_item_id,
-            plan["title"],
-            task,
-            repo_type,
-            model_config)
-
-        for sub in subtasks:
-            print(f"--- Subtask: {sub['title']} ---")
-
-            changed_files = await execute_subtask(
-                repo_path,
-                temp_workspace,
-                work_item_id,
-                plan["title"],
-                task,
-                sub,
-                repo_type,
-                enforcer,
-                model_config
-            )
-
+            print("Committing ALL detected file changes")
             await gitflow.commit_task_changes(
                 branch_name=branch_name,
                 work_item_id=work_item_id,
-                task=sub,
+                task={"title": "Commit All"},
                 changed_files=changed_files,
             )
 
-            task_memory.add(task["title"], sub["title"], changed_files, notes="")
+            print("Pushing branch")
+            await gitflow.push_branch(branch_name)
 
-    # ---------------------------------------------------------
-    # 3b. Verify build and test
-    # ---------------------------------------------------------
-    validator = BuildTestValidator(
-        repo_path=repo_path,
-        temp_workspace=temp_workspace,
-        max_fix_attempts=3,
-        repo_type=repo_type,
-        enforcer=enforcer,
-        model_config=model_config
-    )
+            print("Opening PR")
+            pr_url = await gitflow.open_pull_request(
+                branch_name,
+                f"GitHub Commit-All Test {work_item_id}",
+                "This PR was created using --commit-all mode."
+            )
 
-    ok, message = await validator.run_validation()
+            print("PR created:", pr_url)
+            return
 
-    if not ok:
-        print(f"Build and test validation failed: {message}")
-        return
+        # ---------------------------------------------------------
+        # 1. Fetch Work Item + Plan
+        # ---------------------------------------------------------
+        plan_result = await planner.plan_work_item(work_item_id=work_item_id)
+        plan = plan_result["plan"]
+        plan["id"] = work_item_id
+        # Used by build_pr_description() so the PR summary correctly
+        # says "backend"/"frontend"/"fullstack" instead of always
+        # defaulting to "backend".
+        plan["repo_type"] = repo_type
+        tasks = plan["tasks"]
 
-    print(f"Build and test validation succeeded: {message}")
+        print(f"\nFetched Work Item {work_item_id}: {plan['title']}")
+        print(f"Tasks: {[t['title'] for t in tasks]}")
 
-    # ---------------------------------------------------------
-    # 4. Push branch
-    # ---------------------------------------------------------
-    print(f"\nPushing branch: {branch_name}")
-    await gitflow.push_branch(branch_name)
+        # ---------------------------------------------------------
+        # 2. Create feature branch
+        # ---------------------------------------------------------
+        branch_name = gitflow.make_branch_name(work_item_id, plan["title"])
+        print(f"\nCreating branch: {branch_name}")
+        await gitflow.create_branch(branch_name)
 
-    # ---------------------------------------------------------
-    # 5. Open PR
-    # ---------------------------------------------------------
-    print("\nOpening Pull Request...")
-    pr_body = build_pr_description(plan, task_memory, message)
+        # ---------------------------------------------------------
+        # 3. Task loop → decomposition → subtasks → commit
+        # ---------------------------------------------------------
+        task_memory = TaskMemory()
 
-    pr_url = await gitflow.open_pull_request(
-        branch_name,
-        plan["title"],
-        pr_body,
-    )
+        for idx, task in enumerate(tasks, start=1):
+            print(f"\n=== Task {idx}/{len(tasks)}: {task['title']} ===")
 
-    print(f"PR created: {pr_url}")
+            subtasks = await decompose_task(
+                work_item_id,
+                plan["title"],
+                task,
+                repo_type,
+                model_config)
 
-    # ---------------------------------------------------------
-    # 6. Link PR to Work Item
-    # ---------------------------------------------------------
-    print("\nLinking PR to Work Item...")
-    await ado.link_pr(work_item_id, pr_url)
+            for sub in subtasks:
+                print(f"--- Subtask: {sub['title']} ---")
 
-    # ---------------------------------------------------------
-    # Final output
-    # ---------------------------------------------------------
-    print("\n=== COMPLETE ===")
-    print({
-        "work_item_id": work_item_id,
-        "branch": branch_name,
-        "pr_url": pr_url,
-        "plan": plan,
-    })
+                changed_files = await execute_subtask(
+                    repo_path,
+                    temp_workspace,
+                    work_item_id,
+                    plan["title"],
+                    task,
+                    sub,
+                    repo_type,
+                    enforcer,
+                    model_config
+                )
+
+                if changed_files:
+                    await gitflow.commit_task_changes(
+                        branch_name=branch_name,
+                        work_item_id=work_item_id,
+                        task=sub,
+                        changed_files=changed_files,
+                    )
+                else:
+                    print(f"--- Subtask '{sub['title']}' produced no file changes; skipping commit ---")
+
+                task_memory.add(task["title"], sub["title"], changed_files, notes="")
+
+        # ---------------------------------------------------------
+        # 3b. Verify build and test
+        # ---------------------------------------------------------
+        validator = BuildTestValidator(
+            repo_path=repo_path,
+            temp_workspace=temp_workspace,
+            max_fix_attempts=3,
+            repo_type=repo_type,
+            enforcer=enforcer,
+            model_config=model_config
+        )
+
+        ok, message = await validator.run_validation()
+
+        if not ok:
+            print(f"Build and test validation failed: {message}")
+            return
+
+        print(f"Build and test validation succeeded: {message}")
+
+        # ---------------------------------------------------------
+        # 4. Push branch
+        # ---------------------------------------------------------
+        print(f"\nPushing branch: {branch_name}")
+        await gitflow.push_branch(branch_name)
+
+        # ---------------------------------------------------------
+        # 5. Open PR
+        # ---------------------------------------------------------
+        print("\nOpening Pull Request...")
+        pr_body = build_pr_description(plan, task_memory, message)
+
+        pr_url = await gitflow.open_pull_request(
+            branch_name,
+            plan["title"],
+            pr_body,
+        )
+
+        print(f"PR created: {pr_url}")
+
+        # ---------------------------------------------------------
+        # 6. Link PR to Work Item
+        # ---------------------------------------------------------
+        print("\nLinking PR to Work Item...")
+        await ado.link_pr(work_item_id, pr_url)
+
+        # ---------------------------------------------------------
+        # Final output
+        # ---------------------------------------------------------
+        print("\n=== COMPLETE ===")
+        print({
+            "work_item_id": work_item_id,
+            "branch": branch_name,
+            "pr_url": pr_url,
+            "plan": plan,
+        })
+
+    finally:
+        # Always terminate both MCP server child processes, whether
+        # this run succeeded, failed validation, or raised partway
+        # through a task. Previously nothing ever called close() on
+        # these, so every invocation (successful or not) leaked a
+        # long-lived "node" process.
+        ado.close()
+        github.close()
 
 
 if __name__ == "__main__":

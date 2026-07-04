@@ -36,15 +36,14 @@ def select_model_for_task_execution(task_title: str, repo_type: str, model_confi
         model = model_config["fixloop_model"]
         return model, resolve_provider(model)
 
-    if repo_type == "backend":
-        if any(x in title for x in ["controller", "service", "handler", "domain"]):
-            model = model_config["execution_model"]
-            return model, resolve_provider(model)
-
-    if repo_type == "frontend":
-        model = model_config["execution_model"]
-        return model, resolve_provider(model)
-
+    # NOTE: repo_type/keyword checks used to branch here, but every
+    # branch resolved to the same model_config["execution_model"] --
+    # there is currently only one execution model, so nothing actually
+    # varied by repo_type or by keyword. Left as a single fallback
+    # rather than dead branches that look like they do something they
+    # don't. If per-repo-type or per-keyword model routing is wanted
+    # later, this is the place to reintroduce it -- with a config
+    # value it can actually select between.
     model = model_config["execution_model"]
     return model, resolve_provider(model)
 

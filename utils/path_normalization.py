@@ -31,8 +31,14 @@ def normalize_path_casing(rel_path: str, repo_type: str = None, workspace_root: 
             normalized_parts.append(part)
             continue
 
-        # If we know the workspace root, check if this folder already exists
-        if current_path:
+        # If we know the workspace root, check if this folder already exists.
+        # current_path itself may not exist yet -- e.g. the model is
+        # creating a brand new two-levels-deep folder such as
+        # "NewSub/Deeper/File.cs" where "NewSub" doesn't exist on disk.
+        # iterdir() on a non-existent path raises FileNotFoundError, so
+        # guard with exists() and just fall through to the "new folder"
+        # casing logic below in that case.
+        if current_path and current_path.exists():
             # Look for a folder with ANY casing that matches this name
             existing = None
             for child in current_path.iterdir():

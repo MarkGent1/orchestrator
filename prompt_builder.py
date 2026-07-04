@@ -120,10 +120,25 @@ async def build_opencode_prompt_for_task(
 
     # ---------------------------------------------------------
     # Repo tree (trimmed)
+    #
+    # Walk with the same EXCLUDED_DIRS pruning used by
+    # collect_relevant_files(). A plain rglob("*") would include
+    # bin/obj/node_modules/.git, which for a freshly-restored .NET
+    # project can easily contain thousands of entries -- so the first
+    # 150 lines of "tree" the model sees would be build output noise
+    # instead of actual source layout.
     # ---------------------------------------------------------
-    repo_tree = "\n".join(
-        [str(p.relative_to(repo_path)) for p in repo_path.rglob("*")][:150]
-    )
+    tree_entries = []
+    for root, dirs, files in repo_path.walk():
+        dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
+        for name in dirs + files:
+            tree_entries.append(str((Path(root) / name).relative_to(repo_path)))
+            if len(tree_entries) >= 150:
+                break
+        if len(tree_entries) >= 150:
+            break
+
+    repo_tree = "\n".join(tree_entries)
 
     # ---------------------------------------------------------
     # Relevant files (filtered)
@@ -193,8 +208,8 @@ Return ONLY a JSON array of file edits:
 [
   {
     "file": "relative/path/to/file",
-    "instructions": "create|modify|delete|append",
-    "content": "full file content after edit"
+    "instructions": "create|modify|delete",
+    "content": "full file content after edit (ignored for delete)"
   }
 ]
 
