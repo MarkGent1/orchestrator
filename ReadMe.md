@@ -15,6 +15,7 @@
 13. [How to Onboard New Repos](docs/pages/12-onboard-new-repos.md)
 14. [Model Capabilities](docs/pages/13-model-capabilities.md)
 15. [Resume From a Crash](docs/pages/14-resume-from-crash.md)
+16. [Roadmap for advancing AI Engineering Practices](docs/roadmap/1-roadmap-overview.md)
 
 # Overview
 
