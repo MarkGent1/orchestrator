@@ -43,7 +43,27 @@ class Agent:
         last_error: Optional[AgentError] = None
 
         for attempt in range(1, retries + 1):
-            result = await self._execute(context)
+            # _execute() implementations wrap calls into modules that
+            # can raise (e.g. FixLoopAgent -> FixLoop.attempt_fix()
+            # raises ValueError/TypeError on an illegal path or a
+            # malformed model response). Without this try/except, that
+            # exception would propagate straight out of run(), skip
+            # every retry, and crash the whole supervisor run
+            # un-resumably -- exactly the failure mode the rest of the
+            # pipeline (task_executor.py, validator.py) was fixed to
+            # avoid. Converting it into a failed AgentResult here means
+            # every agent gets that same containment for free, and the
+            # retry loop actually gets to run as advertised.
+            try:
+                result = await self._execute(context)
+            except Exception as ex:
+                result = AgentResult(
+                    success=False,
+                    error=AgentError(
+                        type=type(ex).__name__,
+                        message=str(ex),
+                    ),
+                )
 
             if result.success:
                 result.metadata.update({

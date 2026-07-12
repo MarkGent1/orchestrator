@@ -116,7 +116,12 @@ def collect_relevant_files(repo_path: Path, repo_type: str, max_files: int = 200
                 content = ""
 
             relevant.append({
-                "path": str(full_path.relative_to(repo_path)),
+                # Force forward slashes regardless of host OS -- str()
+                # on a WindowsPath renders "\\"-separated, which would
+                # be inconsistent with every other path shown to the
+                # model in this prompt (JSON edit paths, test
+                # placement rules, the repo tree below all use "/").
+                "path": str(full_path.relative_to(repo_path)).replace("\\", "/"),
                 "content": content
             })
 
@@ -155,7 +160,13 @@ async def build_opencode_prompt_for_task(
     for root, dirs, files in repo_path.walk():
         dirs[:] = [d for d in dirs if d not in TREE_EXCLUDED_DIRS]
         for name in dirs + files:
-            tree_entries.append(str((Path(root) / name).relative_to(repo_path)))
+            # Force forward slashes regardless of host OS -- on
+            # Windows, str(WindowsPath(...)) renders "\\"-separated,
+            # which would make the tree the model sees inconsistent
+            # with every other forward-slash path in this same prompt
+            # (JSON edit paths, test placement rules, etc.).
+            rel = str((Path(root) / name).relative_to(repo_path)).replace("\\", "/")
+            tree_entries.append(rel)
             if len(tree_entries) >= 150:
                 break
         if len(tree_entries) >= 150:

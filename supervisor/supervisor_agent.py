@@ -1,9 +1,10 @@
 from __future__ import annotations
+import subprocess
 import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from agents.base.agent import ContextPacket, AgentError
+from agents.base.agent import ContextPacket
 from agents.planning_agent import PlanningAgent
 from agents.decomposition_agent import DecompositionAgent
 from agents.execution_agent import ExecutionAgent
@@ -28,6 +29,35 @@ from validator import BuildTestValidator
 from mcp_servers.ado_mcp_client import AdoMcpClient
 from mcp_servers.github_mcp_client import GithubMcpClient
 
+
+def _checkout_branch_for_resume(repo_path: Path, branch_name: str) -> bool:
+    """
+    Checks out an existing feature branch in the REAL repo before the
+    temp workspace is copied from it, so a resumed run's scratch copy
+    reflects everything already committed in previous runs instead of
+    the original base branch.
+    """
+    def run_git(args):
+        try:
+            return subprocess.run(
+                ["git", *args], cwd=repo_path, capture_output=True, text=True
+            )
+        except FileNotFoundError as ex:
+            print(f"git is not available on PATH: {ex}")
+            return None
+
+    result = run_git(["checkout", branch_name])
+    if result is not None and result.returncode == 0:
+        return True
+
+    run_git(["fetch", "origin", branch_name])
+    result = run_git(["checkout", branch_name])
+    if result is not None and result.returncode == 0:
+        return True
+
+    if result is not None:
+        print(f"git checkout output:\n{result.stderr}")
+    return False
 
 class SupervisorAgent:
     """
@@ -67,8 +97,11 @@ class SupervisorAgent:
 
     async def run(self):
         try:
-            await self._load_or_resume_state()
-            await self._prepare_workspace()
+            if not await self._load_or_resume_state():
+                return
+            if not await self._prepare_workspace():
+                return
+
             await self._detect_repo_type()
             await self._init_enforcer_and_modules()
             await self._init_agents()
@@ -82,6 +115,18 @@ class SupervisorAgent:
             await self._execute_tasks(plan, tasks, branch_name, task_memory)
 
             build_ok, build_msg = await self._validate_repo()
+            if not build_ok:
+                # Must stop here -- the old main.py returned immediately
+                # on a failed build/test validation rather than pushing
+                # and opening a PR for code known not to build/pass
+                # tests. That check was missing here: run() previously
+                # fell straight through to _ensure_pr() regardless of
+                # build_ok, which would have opened a PR advertising
+                # broken code on every unfixable validation failure.
+                print(f"Build and test validation failed: {build_msg}")
+                return
+
+            print(f"Build and test validation succeeded: {build_msg}")
             pr_url = await self._ensure_pr(plan, task_memory, build_msg, branch_name)
 
             await self._link_pr_to_work_item(pr_url)
@@ -104,11 +149,40 @@ class SupervisorAgent:
     # Init
     # ---------------------------------------------------------
 
-    async def _load_or_resume_state(self):
+    async def _load_or_resume_state(self) -> bool:
+        """
+        Returns False if the caller should abort the run cleanly (a
+        message has already been printed explaining why). Deliberately
+        does NOT raise for the "resume can't check out its branch"
+        case -- that's an expected, user-actionable outcome (fix the
+        branch manually, or delete the state file to start over), not
+        a bug, and shouldn't surface as an unhandled traceback.
+        """
         self.run_state = RunState.load(self.repo_path, self.work_item_id)
         self.resuming = self.run_state is not None
 
-    async def _prepare_workspace(self):
+        if self.resuming:
+            branch = self.run_state.branch_name
+            print(f"\nResuming previous run for Work Item {self.work_item_id} on branch '{branch}'")
+
+            if not _checkout_branch_for_resume(self.repo_path, branch):
+                print(
+                    f"Could not check out existing branch '{branch}' in {self.repo_path}. "
+                    f"Aborting resume to avoid generating edits against the wrong base.\n"
+                    f"Check out the branch manually and re-run, or delete {self.run_state.path} "
+                    f"to start this Work Item over from scratch."
+                )
+                return False
+
+        return True
+
+    async def _prepare_workspace(self) -> bool:
+        """
+        Returns False if pre-flight failed and the run should stop
+        cleanly. A repo that isn't backend/frontend, or that fails to
+        build on its base branch, is an expected outcome the caller
+        should be told about plainly -- not an unhandled exception.
+        """
         self.temp_workspace = self.repo_path / ".orchestrator-tmp"
         if self.temp_workspace.exists():
             shutil.rmtree(self.temp_workspace, ignore_errors=True)
@@ -119,7 +193,11 @@ class SupervisorAgent:
 
         ok, msg = preflight_validate(self.temp_workspace)
         if not ok:
-            raise RuntimeError(msg)
+            print(msg)
+            return False
+
+        print(msg)
+        return True
 
     async def _detect_repo_type(self):
         self.repo_type = detect_repo_type(self.temp_workspace)
@@ -143,6 +221,28 @@ class SupervisorAgent:
         self.arch_agent = ArchitectureAgent()
 
     # ---------------------------------------------------------
+    # Result handling
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def _unwrap(result, what: str):
+        """
+        Agent.run() no longer lets an exception from inside _execute()
+        escape uncaught -- it's converted into
+        AgentResult(success=False, error=...) so retries and the rest
+        of the pipeline can't be crashed by one agent's internals (see
+        agents/base/agent.py). That means every call site here needs
+        to check `result.success` before touching `result.payload`,
+        since payload is None on that failure path. This turns a
+        failure into one clear, labelled RuntimeError instead of a
+        confusing "NoneType is not subscriptable" a line later.
+        """
+        if not result.success:
+            message = result.error.message if result.error else "unknown error"
+            raise RuntimeError(f"{what} failed: {message}")
+        return result.payload
+
+    # ---------------------------------------------------------
     # Planning
     # ---------------------------------------------------------
 
@@ -158,13 +258,16 @@ class SupervisorAgent:
         ctx = ContextPacket(task_ctx={"work_item_id": self.work_item_id})
         result = await self.planner.run(ctx)
 
-        plan = result.payload["plan"]
+        plan = self._unwrap(result, "Planning")["plan"]
         plan["id"] = self.work_item_id
         plan["repo_type"] = self.repo_type
 
-        self.run_state = RunState(self.repo_path, self.work_item_id)
-        self.run_state.init_plan(None, plan["title"], plan["tasks"])
-
+        # RunState isn't created/persisted here on purpose: a plan with
+        # no branch yet isn't a safely resumable state (there'd be
+        # nothing to check out on a crash between here and
+        # _ensure_branch() actually creating one). init_plan() below
+        # only runs once the branch genuinely exists, so plan and
+        # branch are always persisted together.
         return plan
 
     # ---------------------------------------------------------
@@ -180,8 +283,8 @@ class SupervisorAgent:
         branch_name = gitflow.make_branch_name(self.work_item_id, plan["title"])
         await gitflow.create_branch(branch_name)
 
-        self.run_state.branch_name = branch_name
-        self.run_state.save()
+        self.run_state = RunState(self.repo_path, self.work_item_id)
+        self.run_state.init_plan(branch_name, plan["title"], plan["tasks"])
 
         return branch_name
 
@@ -208,7 +311,7 @@ class SupervisorAgent:
                     "model_config": self.model_config,
                 })
                 result = await self.decomposer.run(ctx)
-                subtasks = result.payload
+                subtasks = self._unwrap(result, "Decomposition")
                 self.run_state.set_task_subtasks(task["title"], subtasks)
 
             # Execute subtasks
@@ -230,9 +333,23 @@ class SupervisorAgent:
                 })
 
                 result = await self.executor.run(ctx)
-                changed_files = result.payload
+                changed_files = self._unwrap(result, "Execution")
 
-                # ARCHITECTURE CHECKS
+                # ARCHITECTURE CHECKS (defense-in-depth)
+                #
+                # execute_subtask() already validates every edit against
+                # Clean Architecture rules internally (via
+                # apply_file_edits_for_task()) and drops the whole
+                # subtask's changes if the model proposed something
+                # illegal, so in practice nothing illegal should reach
+                # this loop. This is a second, independent check on top
+                # of that -- and its failure mode matters: an illegal
+                # path here must NOT raise and crash the whole run the
+                # same way we fixed for execute_subtask() and FixLoop
+                # earlier. Instead, drop just that file and keep going,
+                # so one bad edit can't take down everything already
+                # committed for earlier subtasks.
+                safe_files = []
                 for f in changed_files:
                     arch_ctx = ContextPacket(
                         task_ctx={"enforcer": self.enforcer},
@@ -240,12 +357,14 @@ class SupervisorAgent:
                     )
                     arch_result = await self.arch_agent.run(arch_ctx)
 
-                    if not arch_result.success:
-                        raise AgentError(
-                            type="architecture_error",
-                            message=f"Illegal architecture path: {f['path']}",
-                            details=arch_result.error.details,
+                    if arch_result.success:
+                        safe_files.append(f)
+                    else:
+                        print(
+                            f"--- Dropping illegal architecture path from subtask "
+                            f"'{sub['title']}': {f['path']} ---"
                         )
+                changed_files = safe_files
 
                 # Commit
                 if changed_files:
@@ -255,6 +374,8 @@ class SupervisorAgent:
                         task=sub,
                         changed_files=changed_files,
                     )
+                else:
+                    print(f"--- Subtask '{sub['title']}' produced no file changes; skipping commit ---")
 
                 task_memory.add(task["title"], sub["title"], changed_files, "")
                 self.run_state.mark_subtask_done(task["title"], sub["title"])
@@ -280,10 +401,23 @@ class SupervisorAgent:
 
         result = await self.validator_agent.run(ctx)
 
+        # Unlike _unwrap()'s call sites, a failed validation is a
+        # normal, expected outcome here (not a crash condition) --
+        # ValidationAgent._execute() always sets payload={"message":
+        # ...} whether or not validation passed. payload is only ever
+        # None if _execute() itself raised something unexpected, which
+        # Agent.run() now converts into success=False with no payload;
+        # fall back to the error message in that case instead of
+        # crashing on `None["message"]`.
+        if result.payload is not None:
+            message = result.payload["message"]
+        else:
+            message = result.error.message if result.error else "Validation failed with no details"
+
         if result.success:
             self.run_state.mark_validated()
 
-        return result.success, result.payload["message"]
+        return result.success, message
 
     # ---------------------------------------------------------
     # PR
@@ -302,7 +436,7 @@ class SupervisorAgent:
         })
 
         pr_result = await self.pr_agent.run(ctx)
-        pr_body = pr_result.payload["pr_body"]
+        pr_body = self._unwrap(pr_result, "PR description generation")["pr_body"]
 
         await gitflow.push_branch(branch_name)
 
