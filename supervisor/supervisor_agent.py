@@ -78,7 +78,18 @@ class SupervisorAgent:
         self.run_state: Optional[RunState] = None
         self.resuming: bool = False
 
-        root = Path(__file__).parent.parent
+        # The mcp-servers/ directory (the Node.js server.js processes)
+        # lives one level ABOVE the orchestrator project itself, as a
+        # sibling of it -- not inside it. The old main.py computed
+        # this correctly with two .parent calls because it lived
+        # directly at <orchestrator>/main.py (file -> orchestrator ->
+        # sibling root). This class lives one folder deeper, at
+        # <orchestrator>/supervisor/supervisor_agent.py, so it needs a
+        # third .parent to land in the same place -- without it, this
+        # resolved to <orchestrator>/mcp-servers/... (one level too
+        # shallow), which doesn't exist and crashes both MCP clients
+        # on startup with MODULE_NOT_FOUND.
+        root = Path(__file__).parent.parent.parent
         self.ado = AdoMcpClient(str(root / "mcp-servers" / "ado" / "server.js"))
         self.github = GithubMcpClient(str(root / "mcp-servers" / "github" / "server.js"))
 
